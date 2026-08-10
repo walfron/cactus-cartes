@@ -346,7 +346,7 @@
     return state;
   }
   function CactusGame() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e;
     const [me, setMe] = useState(null);
     const [nameInput, setNameInput] = useState("");
     const [codeInput, setCodeInput] = useState("");
@@ -354,9 +354,12 @@
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
     const [selection, setSelection] = useState(null);
-    const [slapMode, setSlapMode] = useState(false);
+    const [drag, setDrag] = useState(null);
+    const [flashSlot, setFlashSlot] = useState(null);
     const [myPeek, setMyPeek] = useState({});
     const [now, setNow] = useState(Date.now());
+    const discardRef = useRef(null);
+    const DRAG_THRESHOLD = 10;
     useEffect(() => {
       const t = setInterval(() => setNow(Date.now()), 300);
       return () => clearInterval(t);
@@ -681,37 +684,105 @@
       setSelection(null);
     }
     async function attemptSlap(slotIdx) {
-      if (!room || !me || room.phase !== "playing") return;
-      await withRoom((s) => {
-        if (s.phase !== "playing") return null;
-        const hand = s.hands[me.id];
-        const card = hand && hand[slotIdx];
-        if (!card || s.discard.length === 0) return null;
-        const top = s.discard[s.discard.length - 1];
-        if (card.r === top.r) {
-          hand[slotIdx] = null;
-          s.discard.push(card);
-          pushLog(s, `\u26A1 ${me.name} pose une carte \xE0 la vol\xE9e (${label(card.r)}) !`);
-          checkEmptyHand(s, me.id);
-        } else {
-          s.discard.push(card);
-          let replacement = s.deck.length > 0 ? s.deck.pop() : null;
-          if (!replacement) {
-            const newTop = s.discard[s.discard.length - 1];
-            const rest = s.discard.slice(0, -1);
-            s.deck = shuffle(rest);
-            s.discard = [newTop];
-            replacement = s.deck.pop();
+      if (!room || !me || room.phase !== "playing" || busy) return null;
+      let outcome = null;
+      setBusy(true);
+      try {
+        const result = await roomRef(room.code).transaction((current) => {
+          if (!current) return current;
+          current = hydrate(current);
+          if (current.phase !== "playing") return current;
+          const hand = current.hands[me.id];
+          const card = hand && hand[slotIdx];
+          if (!card || current.discard.length === 0) return current;
+          const top = current.discard[current.discard.length - 1];
+          if (card.r === top.r) {
+            hand[slotIdx] = null;
+            current.discard.push(card);
+            pushLog(current, `\u26A1 ${me.name} pose une carte \xE0 la vol\xE9e (${label(card.r)}) !`);
+            checkEmptyHand(current, me.id);
+            outcome = "hit";
+          } else {
+            current.discard.push(card);
+            let replacement = current.deck.length > 0 ? current.deck.pop() : null;
+            if (!replacement) {
+              const newTop = current.discard[current.discard.length - 1];
+              const rest = current.discard.slice(0, -1);
+              current.deck = shuffle(rest);
+              current.discard = [newTop];
+              replacement = current.deck.pop();
+            }
+            hand[slotIdx] = replacement || null;
+            pushLog(
+              current,
+              `\u270B ${me.name} se trompe en posant \xE0 la vol\xE9e \u2014 carte remplac\xE9e \xE0 l'aveugle.`
+            );
+            outcome = "miss";
           }
-          hand[slotIdx] = replacement || null;
-          pushLog(
-            s,
-            `\u270B ${me.name} se trompe en posant \xE0 la vol\xE9e \u2014 carte remplac\xE9e \xE0 l'aveugle.`
-          );
+          current.updatedAt = Date.now();
+          return current;
+        });
+        if (result.committed && result.snapshot.exists()) {
+          setRoom(hydrate(result.snapshot.val()));
         }
-        return s;
+      } finally {
+        setBusy(false);
+      }
+      return outcome;
+    }
+    function isOverDiscard(x, y) {
+      if (!discardRef.current) return false;
+      const r = discardRef.current.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    }
+    function onMyCardPointerDown(e, idx, card) {
+      if (!room || room.phase !== "playing" || !card) return;
+      e.preventDefault();
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (err) {
+      }
+      setDrag({
+        idx,
+        card,
+        startX: e.clientX,
+        startY: e.clientY,
+        x: e.clientX,
+        y: e.clientY,
+        moved: false,
+        pointerId: e.pointerId
       });
-      setSlapMode(false);
+    }
+    function onMyCardPointerMove(e) {
+      setDrag((d) => {
+        if (!d || e.pointerId !== d.pointerId) return d;
+        const dx = e.clientX - d.startX;
+        const dy = e.clientY - d.startY;
+        const moved = d.moved || Math.hypot(dx, dy) > DRAG_THRESHOLD;
+        return { ...d, x: e.clientX, y: e.clientY, moved };
+      });
+    }
+    async function onMyCardPointerUp(e, idx) {
+      const d = drag;
+      setDrag(null);
+      if (!d || d.idx !== idx) return;
+      if (d.moved) {
+        if (isOverDiscard(e.clientX, e.clientY)) {
+          const outcome = await attemptSlap(idx);
+          if (outcome === "miss") {
+            setFlashSlot({ idx, kind: "miss" });
+            setTimeout(() => setFlashSlot(null), 650);
+          } else if (outcome === "hit") {
+            setFlashSlot({ idx, kind: "hit" });
+            setTimeout(() => setFlashSlot(null), 350);
+          }
+        }
+      } else {
+        handleCardClick(me.id, idx);
+      }
+    }
+    function onMyCardPointerCancel() {
+      setDrag(null);
     }
     async function callCactus() {
       if (!myTurn || room.turnPhase !== "awaitDraw") return;
@@ -835,7 +906,7 @@
   .grid2x2-mine .card { width:70px; height:96px; font-size:23px; }
   .pts-tag { margin-top:6px; font-size:12px; color:var(--gold); font-weight:600; }
 
-  .card { width:54px; height:76px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:600; font-size:19px; cursor:default; user-select:none; position:relative; transition: transform .15s ease; border:1px solid rgba(0,0,0,0.25);}
+  .card { width:54px; height:76px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:600; font-size:19px; cursor:default; user-select:none; position:relative; transition: transform .15s ease, opacity .15s ease; border:1px solid rgba(0,0,0,0.25);}
   .card.clickable{ cursor:pointer; }
   .card.clickable:hover{ transform:translateY(-4px); }
   .card.face-down { background: repeating-linear-gradient(135deg, #6B3F55, #6B3F55 6px, #5A3448 6px, #5A3448 12px); border:1px solid rgba(201,162,75,0.4); color:transparent; }
@@ -845,11 +916,27 @@
   .card.empty { background:transparent; border:1px dashed rgba(244,236,216,0.2); }
   .card.selected { outline:2px solid var(--gold); outline-offset:2px; }
   .card.drawn-preview { outline:2px solid var(--gold); outline-offset:2px; width:64px; height:88px; font-size:21px; flex-shrink:0; }
-  .card.slap-target { outline:2px dashed var(--berry-bright); outline-offset:2px; }
-  .card.slap-target:hover{ outline-style:solid; }
 
-  .slapbar { display:flex; align-items:center; gap:10px; margin-top:14px; background:rgba(140,63,74,0.12); border:1px solid rgba(184,80,93,0.35); border-radius:14px; padding:12px 16px; flex-wrap:wrap; }
-  .slapbar .hint { flex:1; font-size:13px; min-width:200px; }
+  .card.draggable { cursor:grab; touch-action:none; }
+  .card.draggable:active { cursor:grabbing; }
+  .card.drag-source { opacity:0.3; }
+  .card.flash-miss { animation: slap-miss 0.6s ease; }
+  .card.flash-hit { animation: slap-hit 0.35s ease; }
+  @keyframes slap-miss {
+    0% { transform: translateY(-30px) scale(0.7); opacity:0; }
+    60% { transform: translateY(4px) scale(1.06); opacity:1; }
+    100% { transform: translateY(0) scale(1); }
+  }
+  @keyframes slap-hit {
+    0% { transform: scale(1); opacity:1; }
+    100% { transform: scale(0.4); opacity:0; }
+  }
+
+  .discard-zone { border-radius:12px; padding:6px; transition: box-shadow .15s ease, background .15s ease; }
+  .discard-zone.drop-active { box-shadow: 0 0 0 3px var(--gold), 0 0 22px rgba(201,162,75,0.55); background: rgba(201,162,75,0.12); }
+
+  .drag-ghost { position:fixed; top:0; left:0; pointer-events:none; z-index:200; transform: translate(-50%, -50%) rotate(-4deg) scale(1.08); filter: drop-shadow(0 8px 16px rgba(0,0,0,0.45)); }
+  .drag-ghost .card { width:70px; height:96px; font-size:23px; }
 
 
   .drawoff-cards { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:16px 0; }
@@ -882,13 +969,12 @@
     .piles-row{ gap:20px; padding:12px 16px; }
     .card{ width:44px; height:60px; font-size:15px; }
     .grid2x2-mine .card{ width:58px; height:80px; font-size:19px; }
+    .drag-ghost .card{ width:58px; height:80px; font-size:19px; }
     .card.drawn-preview{ width:52px; height:72px; font-size:17px; }
     .drawn-banner{ flex-direction:column; text-align:center; }
     .actionbar{ flex-direction:column; align-items:stretch; }
     .actionbar .msg{ text-align:center; }
     .actionbar .btn{ width:100%; }
-    .slapbar{ flex-direction:column; align-items:stretch; text-align:center; }
-    .slapbar .btn{ width:100%; }
     .scoreboard{ overflow-x:auto; }
     .field input{ font-size:16px; } /* \xE9vite le zoom auto iOS */
   }
@@ -931,11 +1017,7 @@
       const visible = revealAtEnd || myVisibleCard(ownerId, card);
       const selected = selection && selection.owner === ownerId && selection.idx === idx;
       let clickable = false;
-      let isSlapTarget = false;
-      if (slapMode && isMe && room.phase === "playing") {
-        clickable = true;
-        isSlapTarget = true;
-      } else if (room.phase === "playing" && myTurn) {
+      if (room.phase === "playing" && myTurn) {
         if (room.turnPhase === "awaitDecision" && isMe) clickable = true;
         if (room.turnPhase === "awaitPower" && room.power) {
           const pw = room.power;
@@ -946,14 +1028,21 @@
           if (pw.type === "kingLook") clickable = true;
         }
       }
+      const draggable = isMe && room.phase === "playing";
       const cancelled = ((_d2 = (_c2 = (_b2 = room.roundResults) == null ? void 0 : _b2[ownerId]) == null ? void 0 : _c2.cancelled) == null ? void 0 : _d2.includes(idx)) && revealAtEnd;
+      const isDragSource = draggable && drag && drag.idx === idx && drag.moved;
+      const flash = isMe && flashSlot && flashSlot.idx === idx ? flashSlot.kind : null;
       return /* @__PURE__ */ React.createElement(
         "div",
         {
           key: idx,
-          className: `card ${visible ? "face-up" : "face-down"} ${visible && isRed(card.s) ? "red" : ""} ${clickable ? "clickable" : ""} ${selected ? "selected" : ""} ${isSlapTarget ? "slap-target" : ""}`,
+          className: `card ${visible ? "face-up" : "face-down"} ${visible && isRed(card.s) ? "red" : ""} ${clickable ? "clickable" : ""} ${selected ? "selected" : ""} ${draggable ? "draggable" : ""} ${isDragSource ? "drag-source" : ""} ${flash === "miss" ? "flash-miss" : ""} ${flash === "hit" ? "flash-hit" : ""}`,
           style: cancelled ? { opacity: 0.35 } : void 0,
-          onClick: () => clickable && (isSlapTarget ? attemptSlap(idx) : handleCardClick(ownerId, idx)),
+          onClick: () => !draggable && clickable && handleCardClick(ownerId, idx),
+          onPointerDown: draggable ? (e) => onMyCardPointerDown(e, idx, card) : void 0,
+          onPointerMove: draggable ? onMyCardPointerMove : void 0,
+          onPointerUp: draggable ? (e) => onMyCardPointerUp(e, idx) : void 0,
+          onPointerCancel: draggable ? onMyCardPointerCancel : void 0,
           title: clickable ? "Cliquer" : void 0
         },
         visible ? `${label(card.r)}${card.s}` : ""
@@ -983,15 +1072,30 @@
         className: `card drawpile face-down ${myTurn && room.turnPhase === "awaitDraw" ? "clickable" : ""}`,
         onClick: () => myTurn && room.turnPhase === "awaitDraw" && drawFrom("deck")
       }
-    ), /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "Pioche (", room.deck.length, ")")), /* @__PURE__ */ React.createElement("div", { className: "pile" }, room.discard.length > 0 ? /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "Pioche (", room.deck.length, ")")), /* @__PURE__ */ React.createElement(
       "div",
       {
-        className: `card face-up ${isRed(room.discard[room.discard.length - 1].s) ? "red" : ""} ${myTurn && room.turnPhase === "awaitDraw" ? "clickable" : ""}`,
-        onClick: () => myTurn && room.turnPhase === "awaitDraw" && drawFrom("discard")
+        ref: discardRef,
+        className: `pile discard-zone ${drag && drag.moved && isOverDiscard(drag.x, drag.y) ? "drop-active" : ""}`
       },
-      label(room.discard[room.discard.length - 1].r),
-      room.discard[room.discard.length - 1].s
-    ) : /* @__PURE__ */ React.createElement("div", { className: "card empty" }), /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "D\xE9fausse"))), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "drawn-banner" }, /* @__PURE__ */ React.createElement("div", { className: `card face-up drawn-preview ${isRed(room.drawn.card.s) ? "red" : ""}` }, label(room.drawn.card.r), room.drawn.card.s), /* @__PURE__ */ React.createElement("div", { className: "drawn-banner-text" }, "C'est ta carte pioch\xE9e \u2014 choisis une de tes cartes ci-dessous pour l'\xE9changer, ou d\xE9fausse-la avec le bouton plus bas."))), /* @__PURE__ */ React.createElement("div", { className: "my-area" }, /* @__PURE__ */ React.createElement("div", { className: `pname ${myTurn ? "pname-active" : ""}` }, myTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), "Toi", room.cactusBy === me.id && " \u{1F335}", ((_a = room.outPlayers) == null ? void 0 : _a[me.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2 grid2x2-mine" }, [0, 1, 2, 3].map((i) => renderCard(me.id, i, true))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b = room.roundResults) == null ? void 0 : _b[me.id]) && /* @__PURE__ */ React.createElement("div", { className: "pts-tag" }, room.roundResults[me.id].total, " pts", room.roundResults[me.id].doubled && " (x2 !)"))), /* @__PURE__ */ React.createElement("div", { className: "actionbar" }, room.phase === "playing" && /* @__PURE__ */ React.createElement("div", { className: "msg" }, (() => {
+      room.discard.length > 0 ? /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          className: `card face-up ${isRed(room.discard[room.discard.length - 1].s) ? "red" : ""} ${myTurn && room.turnPhase === "awaitDraw" ? "clickable" : ""}`,
+          onClick: () => myTurn && room.turnPhase === "awaitDraw" && drawFrom("discard")
+        },
+        label(room.discard[room.discard.length - 1].r),
+        room.discard[room.discard.length - 1].s
+      ) : /* @__PURE__ */ React.createElement("div", { className: "card empty" }),
+      /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "D\xE9fausse")
+    )), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "drawn-banner" }, /* @__PURE__ */ React.createElement("div", { className: `card face-up drawn-preview ${isRed(room.drawn.card.s) ? "red" : ""}` }, label(room.drawn.card.r), room.drawn.card.s), /* @__PURE__ */ React.createElement("div", { className: "drawn-banner-text" }, "C'est ta carte pioch\xE9e \u2014 choisis une de tes cartes ci-dessous pour l'\xE9changer, ou d\xE9fausse-la avec le bouton plus bas.")), drag && drag.moved && /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        className: "drag-ghost",
+        style: { left: drag.x, top: drag.y }
+      },
+      /* @__PURE__ */ React.createElement("div", { className: `card face-up ${isRed(drag.card.s) ? "red" : ""}` }, label(drag.card.r), drag.card.s)
+    )), /* @__PURE__ */ React.createElement("div", { className: "my-area" }, /* @__PURE__ */ React.createElement("div", { className: `pname ${myTurn ? "pname-active" : ""}` }, myTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), "Toi", room.cactusBy === me.id && " \u{1F335}", ((_a = room.outPlayers) == null ? void 0 : _a[me.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2 grid2x2-mine" }, [0, 1, 2, 3].map((i) => renderCard(me.id, i, true))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b = room.roundResults) == null ? void 0 : _b[me.id]) && /* @__PURE__ */ React.createElement("div", { className: "pts-tag" }, room.roundResults[me.id].total, " pts", room.roundResults[me.id].doubled && " (x2 !)"))), /* @__PURE__ */ React.createElement("div", { className: "actionbar" }, room.phase === "playing" && /* @__PURE__ */ React.createElement("div", { className: "msg" }, (() => {
       var _a2;
       if (!myTurn) {
         return /* @__PURE__ */ React.createElement("span", null, "Tour de ", /* @__PURE__ */ React.createElement("b", null, (_a2 = room.players.find((p) => p.id === room.order[room.turnIdx])) == null ? void 0 : _a2.name), "\u2026");
@@ -1006,15 +1110,7 @@
         return /* @__PURE__ */ React.createElement("span", null, "Pouvoir : ", /* @__PURE__ */ React.createElement("b", null, powerLabel(room.power.type)), room.power.type === "kingLook" && room.power.stage === 2 && " \u2014 \xE9change ou passe.");
       }
       return null;
-    })()), room.phase === "playing" && myTurn && room.turnPhase === "awaitDraw" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-berry", onClick: callCactus, disabled: busy }, "\u{1F335} Appeler Cactus !"), room.phase === "playing" && myTurn && room.turnPhase === "awaitDecision" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: discardDrawnAndMaybePower, disabled: busy }, "D\xE9fausser", room.drawn && powerOf(room.drawn.card.r) ? " & activer le pouvoir" : ""), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_c = room.power) == null ? void 0 : _c.type) !== "kingLook" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: skipPower, disabled: busy }, "Passer"), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_d = room.power) == null ? void 0 : _d.type) === "kingLook" && room.power.stage === 2 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: declineKingSwap, disabled: busy }, "Ne pas \xE9changer"), room.phase === "roundEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: nextRound, disabled: busy }, "Manche suivante"), room.phase === "gameEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: newGame, disabled: busy }, "Nouvelle partie"), (room.phase === "roundEnd" || room.phase === "gameEnd") && !isHost && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: "rgba(244,236,216,0.6)" } }, "En attente de l'h\xF4te\u2026")), room.phase === "playing" && !((_e = room.outPlayers) == null ? void 0 : _e[me.id]) && /* @__PURE__ */ React.createElement("div", { className: "slapbar" }, /* @__PURE__ */ React.createElement("div", { className: "hint" }, slapMode ? "Clique sur une de tes cartes pour la poser sur la d\xE9fausse \u2014 \xE0 tout moment, m\xEAme hors de ton tour." : "As-tu la m\xEAme carte que le dessus de la d\xE9fausse ? Pose-la \xE0 la vol\xE9e pour t'en d\xE9barrasser."), /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        className: slapMode ? "btn btn-ghost" : "btn btn-berry",
-        onClick: () => setSlapMode((v) => !v),
-        disabled: busy
-      },
-      slapMode ? "Annuler" : "\u26A1 Poser \xE0 la vol\xE9e"
-    )), /* @__PURE__ */ React.createElement("div", { className: "scoreboard" }, /* @__PURE__ */ React.createElement("table", null, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Joueur"), (room.scores[(_f = room.players[0]) == null ? void 0 : _f.id] || []).map((_, i) => /* @__PURE__ */ React.createElement("th", { key: i }, "M", i + 1)), /* @__PURE__ */ React.createElement("th", null, "Total"))), /* @__PURE__ */ React.createElement("tbody", null, room.players.map((p) => {
+    })()), room.phase === "playing" && myTurn && room.turnPhase === "awaitDraw" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-berry", onClick: callCactus, disabled: busy }, "\u{1F335} Appeler Cactus !"), room.phase === "playing" && myTurn && room.turnPhase === "awaitDecision" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: discardDrawnAndMaybePower, disabled: busy }, "D\xE9fausser", room.drawn && powerOf(room.drawn.card.r) ? " & activer le pouvoir" : ""), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_c = room.power) == null ? void 0 : _c.type) !== "kingLook" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: skipPower, disabled: busy }, "Passer"), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_d = room.power) == null ? void 0 : _d.type) === "kingLook" && room.power.stage === 2 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: declineKingSwap, disabled: busy }, "Ne pas \xE9changer"), room.phase === "roundEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: nextRound, disabled: busy }, "Manche suivante"), room.phase === "gameEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: newGame, disabled: busy }, "Nouvelle partie"), (room.phase === "roundEnd" || room.phase === "gameEnd") && !isHost && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: "rgba(244,236,216,0.6)" } }, "En attente de l'h\xF4te\u2026")), /* @__PURE__ */ React.createElement("div", { className: "scoreboard" }, /* @__PURE__ */ React.createElement("table", null, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Joueur"), (room.scores[(_e = room.players[0]) == null ? void 0 : _e.id] || []).map((_, i) => /* @__PURE__ */ React.createElement("th", { key: i }, "M", i + 1)), /* @__PURE__ */ React.createElement("th", null, "Total"))), /* @__PURE__ */ React.createElement("tbody", null, room.players.map((p) => {
       const s = room.scores[p.id] || [];
       return /* @__PURE__ */ React.createElement("tr", { key: p.id }, /* @__PURE__ */ React.createElement("td", { style: { textAlign: "left" } }, p.name), s.map((v, i) => /* @__PURE__ */ React.createElement("td", { key: i }, v)), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--gold)", fontWeight: 700 } }, s.reduce((a, b) => a + b, 0)));
     })))), /* @__PURE__ */ React.createElement("div", { className: "log" }, room.log.map((l, i) => /* @__PURE__ */ React.createElement("div", { key: i }, l.text)))), room.phase === "gameEnd" && /* @__PURE__ */ React.createElement("div", { className: "modal-back" }, /* @__PURE__ */ React.createElement("div", { className: "modal" }, /* @__PURE__ */ React.createElement("div", { className: "disp", style: { fontSize: 24, marginBottom: 6 } }, "\u{1F335} Partie termin\xE9e"), (() => {
