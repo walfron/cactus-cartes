@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Cactus — jeu de cartes entre amis</title>
+<meta name="description" content="Jeu de cartes Cactus multijoueur, à distance, jouable sur téléphone et ordinateur." />
+<style>
+  html, body { margin:0; padding:0; background:#0B2620; min-height:100vh; }
+  #root { min-height:100vh; }
+  #setup-screen { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; font-family: system-ui, sans-serif; color:#F4ECD8; box-sizing:border-box; }
+  #setup-screen .box { max-width:560px; background:rgba(0,0,0,0.25); border:1px solid rgba(244,236,216,0.14); border-radius:16px; padding:28px; }
+  #setup-screen h1 { font-size:22px; margin-top:0; }
+  #setup-screen code { background:rgba(244,236,216,0.1); padding:2px 6px; border-radius:6px; }
+  #setup-screen ol { padding-left:20px; line-height:1.7; }
+  #setup-screen a { color:#C9A24B; }
+  #boot-error { display:none; position:fixed; inset:0; background:#2A1414; color:#F4ECD8; font-family: ui-monospace, monospace; padding:24px; box-sizing:border-box; overflow:auto; z-index:9999; white-space:pre-wrap; font-size:13px; }
+  #boot-error h2 { color:#F0A8A8; font-family: system-ui, sans-serif; }
+</style>
+
+<!-- React (CDN, pas besoin d'installation) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Firebase (synchronisation des parties en temps réel) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<div id="setup-screen" style="display:none">
+  <div class="box">
+    <h1>🌵 Presque prêt !</h1>
+    <p>Il manque la configuration Firebase pour que le jeu puisse synchroniser les parties entre joueurs.</p>
+    <ol>
+      <li>Va sur <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> et crée un projet gratuit.</li>
+      <li>Dans le projet, ajoute une application <b>Web</b> (icône <code>&lt;/&gt;</code>).</li>
+      <li>Copie l'objet <code>firebaseConfig</code> qui s'affiche.</li>
+      <li>Active <b>Realtime Database</b> dans le menu de gauche (mode test).</li>
+      <li>Colle la config dans <code>index.html</code>, tout en haut du script, à la place des <code>"REPLACE_ME"</code>.</li>
+    </ol>
+  </div>
+</div>
+<div id="boot-error">
+  <h2>🌵 Une erreur a empêché le jeu de démarrer</h2>
+  <div id="boot-error-msg"></div>
+  <p style="opacity:0.7">(Vérifie ta configuration Firebase en haut du script, et que la Realtime Database est bien activée.)</p>
+</div>
+
+<script>
+  window.addEventListener("error", function (e) {
+    var box = document.getElementById("boot-error");
+    var msg = document.getElementById("boot-error-msg");
+    if (box && msg) {
+      msg.textContent = (e.error && e.error.stack) || e.message || String(e);
+      box.style.display = "block";
+    }
+  });
+</script>
+
+<script>
+(() => {
+  const { useState, useEffect, useRef, useCallback } = React;
+  const firebaseConfig = {
+    apiKey: "AIzaSyDNMf9oE6wofmBwQVpYJbu2fHsf2tL0wyM",
+    authDomain: "cactus-386da.firebaseapp.com",
+    databaseURL: "https://cactus-386da-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "cactus-386da",
+    storageBucket: "cactus-386da.firebasestorage.app",
+    messagingSenderId: "534574127733",
+    appId: "1:534574127733:web:00b5f9d4b8092b2eebb63c"
+  };
+  if (firebaseConfig.apiKey === "REPLACE_ME") {
+    document.getElementById("setup-screen").style.display = "flex";
+  } else {
+    try {
+      firebase.initializeApp(firebaseConfig);
+    } catch (e) {
+      document.getElementById("boot-error-msg").textContent = e.message;
+      document.getElementById("boot-error").style.display = "block";
+    }
+  }
+  const SUITS = ["\u2660", "\u2665", "\u2666", "\u2663"];
+  const RANK_LABEL = { 1: "A", 11: "V", 12: "D", 13: "R" };
+  const ME_KEY = "cactus_identity";
+  const PEEK_SECONDS = 5;
+  const REVEAL_SECONDS = 3;
+  const DRAWOFF_SECONDS = 4;
+  function label(r) {
+    return RANK_LABEL[r] || String(r);
+  }
+  function cardValue(r, s) {
+    if (r === 13) return isRed(s) ? 0 : 15;
+    return r;
+  }
+  function isRed(s) {
+    return s === "\u2665" || s === "\u2666";
+  }
+  function uid() {
+    return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  }
+  function roomCode() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let c = "";
+    for (let i = 0; i < 5; i++) c += chars[Math.floor(Math.random() * chars.length)];
+    return c;
+  }
+  function buildDeck() {
+    const deck = [];
+    for (const s of SUITS) {
+      for (let r = 1; r <= 13; r++) {
+        deck.push({ id: uid(), s, r });
+      }
+    }
+    return deck;
+  }
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  function powerOf(r) {
+    if (r === 7 || r === 8) return "peekOwn";
+    if (r === 9 || r === 10) return "peekOpp";
+    if (r === 11) return "blindSwap";
+    if (r === 12) return "peekAny";
+    if (r === 13) return "kingLook";
+    return null;
+  }
+  function powerLabel(t) {
+    return {
+      peekOwn: "Regarder une de ses cartes",
+      peekOpp: "Regarder une carte adverse",
+      peekAny: "Regarder une carte (la sienne ou une adverse)",
+      blindSwap: "\xC9changer deux cartes \xE0 l'aveugle (facultatif)",
+      kingLook: "Regarder une carte, puis \xE9changer si tu veux"
+    }[t];
+  }
+  function roomRef(code) {
+    return firebase.database().ref("cactusRooms/" + code);
+  }
+  function hydrate(state) {
+    if (!state) return state;
+    state.players = state.players || [];
+    state.order = state.order || [];
+    state.hands = state.hands || {};
+    state.peekedStart = state.peekedStart || {};
+    state.scores = state.scores || {};
+    state.deck = state.deck || [];
+    state.discard = state.discard || [];
+    state.reveal = state.reveal || {};
+    state.outPlayers = state.outPlayers || {};
+    state.log = state.log || [];
+    return state;
+  }
+  async function saveRoom(code, state) {
+    state.updatedAt = Date.now();
+    await roomRef(code).set(state);
+  }
+  function freshRoom(code, hostId, hostName) {
+    return {
+      code,
+      phase: "lobby",
+      // lobby | drawoff | peek | playing | roundEnd | gameEnd
+      hostId,
+      players: [{ id: hostId, name: hostName }],
+      order: [],
+      hands: {},
+      peekedStart: {},
+      scores: {},
+      deck: [],
+      discard: [],
+      turnIdx: 0,
+      turnPhase: null,
+      // awaitDraw | awaitDecision | awaitPower
+      drawn: null,
+      // { by, card, from }
+      power: null,
+      // { type, by, stage, first }
+      reveal: {},
+      // { playerId: { cardId: expiresAt } } local peeks broadcast w/ expiry
+      cactusBy: null,
+      finalLeft: null,
+      outPlayers: {},
+      nextStarter: null,
+      drawoffCards: null,
+      drawoffAt: null,
+      log: [],
+      targetScore: 100,
+      updatedAt: Date.now()
+    };
+  }
+  function pushLog(state, text) {
+    state.log = [{ text, ts: Date.now() }, ...state.log || []].slice(0, 8);
+  }
+  function startDrawoff(state) {
+    const deck = shuffle(buildDeck());
+    const drawoff = {};
+    for (const p of state.players) drawoff[p.id] = deck.pop();
+    state.drawoffCards = drawoff;
+    state.drawoffAt = Date.now();
+    state.phase = "drawoff";
+    pushLog(state, "Tirage au sort \u2014 la carte la plus basse commence.");
+    return state;
+  }
+  function dealRound(state, starterId) {
+    const deck = shuffle(buildDeck());
+    const hands = {};
+    for (const p of state.players) {
+      hands[p.id] = [deck.pop(), deck.pop(), deck.pop(), deck.pop()];
+    }
+    state.hands = hands;
+    state.deck = deck;
+    state.discard = [deck.pop()];
+    const ids = state.players.map((p) => p.id);
+    state.order = starterId ? rotateToStart(ids, starterId) : ids;
+    state.turnIdx = 0;
+    state.turnPhase = "awaitDraw";
+    state.drawn = null;
+    state.power = null;
+    state.reveal = {};
+    state.cactusBy = null;
+    state.finalLeft = null;
+    state.outPlayers = {};
+    state.roundResults = null;
+    state.phase = "peek";
+    state.peekStartedAt = Date.now();
+    const peeked = {};
+    for (const p of state.players) peeked[p.id] = [2, 3];
+    state.peekedStart = peeked;
+    const starter = state.players.find((p) => p.id === state.order[0]);
+    pushLog(
+      state,
+      `Nouvelle manche distribu\xE9e \u2014 regardez vos deux cartes du bas.${starter ? ` ${starter.name} commence.` : ""}`
+    );
+    return state;
+  }
+  function isHandEmpty(hand) {
+    return !hand || hand.every((c) => !c);
+  }
+  function rotateToStart(ids, startId) {
+    const i = ids.indexOf(startId);
+    if (i <= 0) return ids.slice();
+    return [...ids.slice(i), ...ids.slice(0, i)];
+  }
+  function computeHandScore(hand) {
+    const cols = [
+      [0, 2],
+      [1, 3]
+    ];
+    let total = 0;
+    const cancelled = /* @__PURE__ */ new Set();
+    for (const [a, b] of cols) {
+      if (hand[a] && hand[b] && hand[a].r === hand[b].r) {
+        cancelled.add(a);
+        cancelled.add(b);
+      }
+    }
+    hand.forEach((c, i) => {
+      if (c && !cancelled.has(i)) total += cardValue(c.r, c.s);
+    });
+    return { total, cancelled: [...cancelled] };
+  }
+  function checkEmptyHand(state, playerId) {
+    if (isHandEmpty(state.hands[playerId])) {
+      if (!state.outPlayers) state.outPlayers = {};
+      if (!state.outPlayers[playerId]) {
+        state.outPlayers[playerId] = true;
+        const p = state.players.find((pp) => pp.id === playerId);
+        pushLog(state, `${p ? p.name : "Un joueur"} n'a plus de cartes \u2014 0 point garanti, il ne rejoue plus cette manche.`);
+      }
+    }
+  }
+  function endRound(state) {
+    var _a;
+    state.phase = "roundEnd";
+    const results = {};
+    let best = Infinity;
+    for (const p of state.players) {
+      const { total, cancelled } = computeHandScore(state.hands[p.id]);
+      results[p.id] = { total, cancelled };
+      if (total < best) best = total;
+    }
+    if (state.cactusBy) {
+      const callerTotal = results[state.cactusBy].total;
+      const others = state.players.filter((p) => p.id !== state.cactusBy);
+      const someoneStrictlyLower = others.some((p) => results[p.id].total < callerTotal);
+      if (someoneStrictlyLower) {
+        results[state.cactusBy].doubled = true;
+        results[state.cactusBy].total *= 2;
+      }
+    }
+    for (const p of state.players) {
+      if (!state.scores[p.id]) state.scores[p.id] = [];
+      state.scores[p.id].push(results[p.id].total);
+    }
+    state.roundResults = results;
+    let worst = -Infinity;
+    let loserId = ((_a = state.players[0]) == null ? void 0 : _a.id) || null;
+    for (const p of state.players) {
+      if (results[p.id].total > worst) {
+        worst = results[p.id].total;
+        loserId = p.id;
+      }
+    }
+    state.nextStarter = loserId;
+    const totals = state.players.map((p) => ({
+      id: p.id,
+      sum: state.scores[p.id].reduce((a, b) => a + b, 0)
+    }));
+    if (totals.some((t) => t.sum >= state.targetScore)) {
+      state.phase = "gameEnd";
+    }
+    pushLog(state, "Manche termin\xE9e \u2014 cartes r\xE9v\xE9l\xE9es.");
+    return state;
+  }
+  function advanceTurn(state) {
+    if (state.cactusBy) {
+      state.finalLeft -= 1;
+      if (state.finalLeft <= 0) {
+        endRound(state);
+        return state;
+      }
+    }
+    const activeIds = state.order.filter((id) => !state.outPlayers || !state.outPlayers[id]);
+    if (activeIds.length === 0) {
+      endRound(state);
+      return state;
+    }
+    let steps = 0;
+    do {
+      state.turnIdx = (state.turnIdx + 1) % state.order.length;
+      steps++;
+    } while (state.outPlayers && state.outPlayers[state.order[state.turnIdx]] && steps <= state.order.length);
+    state.turnPhase = "awaitDraw";
+    state.drawn = null;
+    state.power = null;
+    if (state.deck.length === 0) {
+      const top = state.discard[state.discard.length - 1];
+      const rest = state.discard.slice(0, -1);
+      state.deck = shuffle(rest);
+      state.discard = [top];
+    }
+    return state;
+  }
+  function CactusGame() {
+    var _a, _b, _c, _d;
+    const [me, setMe] = useState(null);
+    const [nameInput, setNameInput] = useState("");
+    const [codeInput, setCodeInput] = useState("");
+    const [room, setRoom] = useState(null);
+    const [error, setError] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [selection, setSelection] = useState(null);
+    const [slapMode, setSlapMode] = useState(false);
+    const [myPeek, setMyPeek] = useState({});
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => {
+      const t = setInterval(() => setNow(Date.now()), 300);
+      return () => clearInterval(t);
+    }, []);
+    useEffect(() => {
+      try {
+        const raw = localStorage.getItem(ME_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setMe(parsed.me || null);
+          if (parsed.room) setCodeInput(parsed.room);
+        }
+      } catch (e) {
+      }
+    }, []);
+    const persistIdentity = useCallback((meObj, roomC) => {
+      try {
+        localStorage.setItem(ME_KEY, JSON.stringify({ me: meObj, room: roomC || null }));
+      } catch (e) {
+      }
+    }, []);
+    useEffect(() => {
+      if (!(room == null ? void 0 : room.code)) return;
+      const ref = roomRef(room.code);
+      const cb = ref.on("value", (snap) => {
+        if (snap.exists()) setRoom(hydrate(snap.val()));
+      });
+      return () => ref.off("value", cb);
+    }, [room == null ? void 0 : room.code]);
+    async function withRoom(mutator) {
+      if (!(room == null ? void 0 : room.code) || busy) return;
+      setBusy(true);
+      try {
+        const result = await roomRef(room.code).transaction((current) => {
+          if (!current) return current;
+          const next = mutator(hydrate(JSON.parse(JSON.stringify(current))));
+          if (next === null || next === void 0) return void 0;
+          next.updatedAt = Date.now();
+          return next;
+        });
+        if (result.committed && result.snapshot.exists()) {
+          setRoom(hydrate(result.snapshot.val()));
+        }
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function createRoom() {
+      if (!nameInput.trim()) return setError("Entre ton pr\xE9nom.");
+      const id = uid();
+      const meObj = { id, name: nameInput.trim() };
+      const code = roomCode();
+      const state = freshRoom(code, id, meObj.name);
+      await saveRoom(code, state);
+      setMe(meObj);
+      setRoom(state);
+      persistIdentity(meObj, code);
+      setError("");
+    }
+    async function joinRoom() {
+      if (!nameInput.trim()) return setError("Entre ton pr\xE9nom.");
+      if (!codeInput.trim()) return setError("Entre le code de la partie.");
+      const code = codeInput.trim().toUpperCase();
+      const id = uid();
+      let meObj = { id, name: nameInput.trim() };
+      let aborted = false;
+      const result = await roomRef(code).transaction((current) => {
+        if (!current) return current;
+        current = hydrate(current);
+        if (current.phase !== "lobby") {
+          aborted = true;
+          return current;
+        }
+        let name = meObj.name;
+        if (current.players.some((p) => p.name === name)) name = name + " (2)";
+        meObj = { id, name };
+        current.players.push({ id, name });
+        pushLog(current, `${name} a rejoint la partie.`);
+        return current;
+      });
+      if (!result.committed || !result.snapshot.exists()) {
+        return setError("Partie introuvable \u2014 v\xE9rifie le code.");
+      }
+      if (aborted) {
+        return setError("Cette partie a d\xE9j\xE0 commenc\xE9.");
+      }
+      setMe(meObj);
+      setRoom(hydrate(result.snapshot.val()));
+      persistIdentity(meObj, code);
+      setError("");
+    }
+    function leaveRoom() {
+      setRoom(null);
+      setSelection(null);
+      persistIdentity(me, null);
+    }
+    const isHost = room && me && room.hostId === me.id;
+    const myTurn = room && me && room.phase === "playing" && room.order[room.turnIdx] === me.id;
+    async function startGame() {
+      await withRoom((s) => {
+        if (s.players.length < 2) return null;
+        return startDrawoff(s);
+      });
+    }
+    useEffect(() => {
+      if ((room == null ? void 0 : room.phase) === "drawoff") {
+        const startedAt = room.drawoffAt || Date.now();
+        const remain = startedAt + DRAWOFF_SECONDS * 1e3 - Date.now();
+        const t = setTimeout(async () => {
+          await withRoom((s) => {
+            var _a2;
+            if (s.phase !== "drawoff" || !s.drawoffCards) return null;
+            let bestId = (_a2 = s.players[0]) == null ? void 0 : _a2.id;
+            let bestVal = Infinity;
+            for (const p of s.players) {
+              const c = s.drawoffCards[p.id];
+              const v = cardValue(c.r, c.s);
+              if (v < bestVal) {
+                bestVal = v;
+                bestId = p.id;
+              }
+            }
+            return dealRound(s, bestId);
+          });
+        }, Math.max(remain, 0) + 150);
+        return () => clearTimeout(t);
+      }
+    }, [room == null ? void 0 : room.phase, room == null ? void 0 : room.code]);
+    useEffect(() => {
+      if ((room == null ? void 0 : room.phase) === "peek" && me) {
+        const startedAt = room.peekStartedAt || Date.now();
+        const elapsed = (Date.now() - startedAt) / 1e3;
+        if (elapsed < PEEK_SECONDS) {
+          const hand = room.hands[me.id];
+          const idxs = room.peekedStart[me.id] || [];
+          const expiresAt = startedAt + PEEK_SECONDS * 1e3;
+          const map = {};
+          idxs.forEach((i) => {
+            if (hand[i]) map[hand[i].id] = expiresAt;
+          });
+          setMyPeek((prev) => ({ ...prev, ...map }));
+          const remain = expiresAt - Date.now();
+          const t = setTimeout(async () => {
+            await withRoom((s) => {
+              if (s.phase === "peek") {
+                s.phase = "playing";
+                pushLog(s, "La partie commence !");
+              }
+              return s;
+            });
+          }, Math.max(remain, 0) + 150);
+          return () => clearTimeout(t);
+        } else {
+          withRoom((s) => {
+            if (s.phase === "peek") {
+              s.phase = "playing";
+              pushLog(s, "La partie commence !");
+            }
+            return s;
+          });
+        }
+      }
+    }, [room == null ? void 0 : room.phase, room == null ? void 0 : room.code]);
+    useEffect(() => {
+      var _a2;
+      if ((room == null ? void 0 : room.phase) === "playing" && room.turnPhase === "awaitDraw" && ((_a2 = room.outPlayers) == null ? void 0 : _a2[room.order[room.turnIdx]])) {
+        const t = setTimeout(() => {
+          withRoom((s) => {
+            var _a3;
+            if (s.phase === "playing" && s.turnPhase === "awaitDraw" && ((_a3 = s.outPlayers) == null ? void 0 : _a3[s.order[s.turnIdx]])) {
+              return advanceTurn(s);
+            }
+            return null;
+          });
+        }, 400 + Math.random() * 400);
+        return () => clearTimeout(t);
+      }
+    }, [room == null ? void 0 : room.turnIdx, room == null ? void 0 : room.phase, room == null ? void 0 : room.turnPhase]);
+    async function drawFrom(source) {
+      if (!myTurn || room.turnPhase !== "awaitDraw") return;
+      await withRoom((s) => {
+        if (s.order[s.turnIdx] !== me.id || s.turnPhase !== "awaitDraw") return null;
+        let card;
+        if (source === "deck") {
+          if (s.deck.length === 0) return null;
+          card = s.deck.pop();
+        } else {
+          if (s.discard.length === 0) return null;
+          card = s.discard.pop();
+        }
+        s.drawn = { by: me.id, card, from: source };
+        s.turnPhase = "awaitDecision";
+        return s;
+      });
+    }
+    async function swapDrawnInto(slotIdx) {
+      if (!myTurn || room.turnPhase !== "awaitDecision") return;
+      await withRoom((s) => {
+        if (s.order[s.turnIdx] !== me.id || s.turnPhase !== "awaitDecision") return null;
+        const old = s.hands[me.id][slotIdx];
+        s.hands[me.id][slotIdx] = s.drawn.card;
+        s.discard.push(old);
+        pushLog(s, `${me.name} a \xE9chang\xE9 une carte.`);
+        s.drawn = null;
+        return advanceTurn(s);
+      });
+      setSelection(null);
+    }
+    async function discardDrawnAndMaybePower() {
+      if (!myTurn || room.turnPhase !== "awaitDecision") return;
+      await withRoom((s) => {
+        if (s.order[s.turnIdx] !== me.id || s.turnPhase !== "awaitDecision") return null;
+        const card = s.drawn.card;
+        s.discard.push(card);
+        const pw = powerOf(card.r);
+        s.drawn = null;
+        if (pw) {
+          s.power = { type: pw, by: me.id, stage: 1, first: null };
+          s.turnPhase = "awaitPower";
+          pushLog(s, `${me.name} d\xE9fausse un ${label(card.r)} \u2014 ${powerLabel(pw)}.`);
+        } else {
+          pushLog(s, `${me.name} d\xE9fausse un ${label(card.r)}.`);
+          return advanceTurn(s);
+        }
+        return s;
+      });
+      setSelection(null);
+    }
+    async function skipPower() {
+      await withRoom((s) => {
+        if (s.order[s.turnIdx] !== me.id) return null;
+        pushLog(s, `${me.name} passe son pouvoir.`);
+        return advanceTurn(s);
+      });
+      setSelection(null);
+    }
+    function broadcastPeek(state, viewerId, card) {
+      if (!state.reveal[viewerId]) state.reveal[viewerId] = {};
+      state.reveal[viewerId][card.id] = Date.now() + REVEAL_SECONDS * 1e3;
+    }
+    async function handleCardClick(ownerId, slotIdx) {
+      if (!room || !me) return;
+      if (room.phase === "playing" && myTurn && room.turnPhase === "awaitDecision") {
+        return swapDrawnInto(slotIdx);
+      }
+      if (room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && room.power) {
+        const pw = room.power;
+        if (pw.type === "peekOwn" && ownerId === me.id) {
+          await withRoom((s) => {
+            const card = s.hands[ownerId][slotIdx];
+            broadcastPeek(s, me.id, card);
+            pushLog(s, `${me.name} regarde une de ses cartes.`);
+            return advanceTurn(s);
+          });
+        } else if (pw.type === "peekOpp" && ownerId !== me.id) {
+          await withRoom((s) => {
+            const card = s.hands[ownerId][slotIdx];
+            broadcastPeek(s, me.id, card);
+            pushLog(s, `${me.name} regarde une carte adverse.`);
+            return advanceTurn(s);
+          });
+        } else if (pw.type === "peekAny") {
+          await withRoom((s) => {
+            const card = s.hands[ownerId][slotIdx];
+            if (!card) return null;
+            broadcastPeek(s, me.id, card);
+            pushLog(
+              s,
+              ownerId === me.id ? `${me.name} regarde une de ses cartes.` : `${me.name} regarde une carte adverse.`
+            );
+            return advanceTurn(s);
+          });
+        } else if (pw.type === "blindSwap") {
+          if (!pw.first) {
+            await withRoom((s) => {
+              s.power.first = { owner: ownerId, idx: slotIdx };
+              return s;
+            });
+            setSelection({ owner: ownerId, idx: slotIdx });
+          } else if (!(pw.first.owner === ownerId && pw.first.idx === slotIdx)) {
+            await withRoom((s) => {
+              const a = s.power.first;
+              const tmp = s.hands[a.owner][a.idx];
+              s.hands[a.owner][a.idx] = s.hands[ownerId][slotIdx];
+              s.hands[ownerId][slotIdx] = tmp;
+              pushLog(s, `${me.name} \xE9change deux cartes \xE0 l'aveugle.`);
+              return advanceTurn(s);
+            });
+            setSelection(null);
+          }
+        } else if (pw.type === "kingLook") {
+          if (pw.stage === 1) {
+            await withRoom((s) => {
+              const card = s.hands[ownerId][slotIdx];
+              broadcastPeek(s, me.id, card);
+              s.power.stage = 2;
+              s.power.first = { owner: ownerId, idx: slotIdx };
+              return s;
+            });
+            setSelection({ owner: ownerId, idx: slotIdx });
+          } else if (pw.stage === 2) {
+            const a = pw.first;
+            if (a.owner === ownerId && a.idx === slotIdx) return;
+            await withRoom((s) => {
+              const b = s.power.first;
+              const tmp = s.hands[b.owner][b.idx];
+              s.hands[b.owner][b.idx] = s.hands[ownerId][slotIdx];
+              s.hands[ownerId][slotIdx] = tmp;
+              pushLog(s, `${me.name} \xE9change apr\xE8s avoir regard\xE9 une carte.`);
+              return advanceTurn(s);
+            });
+            setSelection(null);
+          }
+        }
+      }
+    }
+    async function declineKingSwap() {
+      await withRoom((s) => {
+        pushLog(s, `${me.name} garde les cartes en place.`);
+        return advanceTurn(s);
+      });
+      setSelection(null);
+    }
+    async function attemptSlap(slotIdx) {
+      if (!room || !me || room.phase !== "playing") return;
+      await withRoom((s) => {
+        if (s.phase !== "playing") return null;
+        const hand = s.hands[me.id];
+        const card = hand && hand[slotIdx];
+        if (!card || s.discard.length === 0) return null;
+        const top = s.discard[s.discard.length - 1];
+        if (card.r === top.r) {
+          hand[slotIdx] = null;
+          s.discard.push(card);
+          pushLog(s, `\u26A1 ${me.name} pose une carte \xE0 la vol\xE9e (${label(card.r)}) !`);
+          checkEmptyHand(s, me.id);
+        } else {
+          s.discard.push(card);
+          let replacement = s.deck.length > 0 ? s.deck.pop() : null;
+          if (!replacement) {
+            const newTop = s.discard[s.discard.length - 1];
+            const rest = s.discard.slice(0, -1);
+            s.deck = shuffle(rest);
+            s.discard = [newTop];
+            replacement = s.deck.pop();
+          }
+          hand[slotIdx] = replacement || null;
+          pushLog(
+            s,
+            `\u270B ${me.name} se trompe en posant \xE0 la vol\xE9e \u2014 carte remplac\xE9e \xE0 l'aveugle.`
+          );
+        }
+        return s;
+      });
+      setSlapMode(false);
+    }
+    async function callCactus() {
+      if (!myTurn || room.turnPhase !== "awaitDraw") return;
+      await withRoom((s) => {
+        if (s.order[s.turnIdx] !== me.id || s.cactusBy) return null;
+        const activeCount = s.order.filter(
+          (id) => !s.outPlayers || !s.outPlayers[id]
+        ).length;
+        s.cactusBy = me.id;
+        s.finalLeft = activeCount;
+        pushLog(s, `\u{1F335} ${me.name} appelle CACTUS !`);
+        return advanceTurn(s);
+      });
+    }
+    async function nextRound() {
+      await withRoom((s) => {
+        return dealRound(s, s.nextStarter);
+      });
+    }
+    async function newGame() {
+      await withRoom((s) => {
+        s.scores = {};
+        s.nextStarter = null;
+        return startDrawoff(s);
+      });
+    }
+    const STYLE = `
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap');
+  .cactus-root {
+    --felt-1:#12332A; --felt-2:#0B2620; --cream:#F4ECD8; --gold:#C9A24B;
+    --ink:#1B2420; --berry:#8C3F4A; --berry-bright:#B8505D; --red:#B5443B; --black:#232620;
+    --line: rgba(244,236,216,0.14);
+    font-family:'Inter',system-ui,sans-serif; color:var(--cream);
+    background: radial-gradient(ellipse at 50% -10%, #1B4536 0%, var(--felt-1) 45%, var(--felt-2) 100%);
+    min-height:100%; width:100%; box-sizing:border-box; padding:20px;
+    position:relative; overflow-x:hidden;
+  }
+  .cactus-root *{box-sizing:border-box;}
+  .disp { font-family:'Fraunces',serif; }
+  .brand { display:flex; align-items:baseline; gap:10px; justify-content:center; margin-bottom:6px;}
+  .brand-mark { font-size:34px; }
+  .brand h1{ font-family:'Fraunces',serif; font-weight:700; font-style:italic; font-size:34px; letter-spacing:0.5px; margin:0; color:var(--cream);}
+  .brand small{ color:var(--gold); letter-spacing:3px; font-size:11px; text-transform:uppercase; }
+  .panel { max-width:420px; margin:60px auto; background:rgba(0,0,0,0.18); border:1px solid var(--line); border-radius:18px; padding:28px; backdrop-filter: blur(4px);}
+  .field { margin-bottom:14px; }
+  .field label{ display:block; font-size:12px; text-transform:uppercase; letter-spacing:1.5px; color:var(--gold); margin-bottom:6px;}
+  .field input{ width:100%; padding:11px 13px; border-radius:10px; border:1px solid var(--line); background:rgba(244,236,216,0.06); color:var(--cream); font-size:15px; font-family:'Inter';}
+  .field input::placeholder{ color:rgba(244,236,216,0.35);}
+  .btn { cursor:pointer; border:none; border-radius:10px; padding:12px 18px; font-family:'Inter'; font-weight:600; font-size:14px; letter-spacing:0.3px; transition:transform .12s ease, filter .12s ease;}
+  .btn:active{ transform: scale(0.97); }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  .btn-gold { background:linear-gradient(180deg,#DDB865,var(--gold)); color:#2B2110; }
+  .btn-gold:hover{ filter:brightness(1.08); }
+  .btn-ghost { background:transparent; color:var(--cream); border:1px solid var(--line); }
+  .btn-ghost:hover{ background:rgba(244,236,216,0.08); }
+  .btn-berry { background:linear-gradient(180deg,var(--berry-bright),var(--berry)); color:#FBEFE9; }
+  .btn-berry:hover{ filter:brightness(1.1); }
+  .row { display:flex; gap:10px; }
+  .err { color:#F0A8A8; font-size:13px; margin-top:8px; }
+  .divider { text-align:center; color:rgba(244,236,216,0.4); font-size:11px; letter-spacing:2px; margin:20px 0; text-transform:uppercase;}
+
+  .lobby-code { text-align:center; margin:18px 0; }
+  .lobby-code .code { font-family:'Fraunces',serif; font-size:40px; font-weight:700; letter-spacing:8px; color:var(--gold); }
+  .lobby-code .hint { font-size:12px; color:rgba(244,236,216,0.55); margin-top:4px;}
+  .plist { list-style:none; padding:0; margin:16px 0; }
+  .plist li { padding:10px 14px; border-radius:10px; background:rgba(244,236,216,0.05); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; font-size:14px;}
+  .tag { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--gold); border:1px solid var(--gold); border-radius:20px; padding:2px 8px;}
+
+  .table-wrap { max-width:980px; margin:0 auto; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;}
+  .roomchip { font-size:12px; color:rgba(244,236,216,0.6); letter-spacing:1px; }
+  .roomchip b{ color:var(--gold); letter-spacing:3px; }
+
+  .table { position:relative; background: radial-gradient(ellipse at center, #1E5744 0%, #123227 70%, #0D241C 100%); border:10px solid #0A1D16; border-radius:50% / 30%; min-height:520px; padding:40px; box-shadow: inset 0 0 60px rgba(0,0,0,0.5), 0 10px 40px rgba(0,0,0,0.4);}
+  @media (max-width:720px){ .table{ border-radius:24px; min-height:auto; padding:16px; } }
+
+  .center-piles { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:flex; gap:22px; align-items:center; }
+  @media (max-width:720px){ .center-piles{ position:static; transform:none; justify-content:center; margin:14px 0; } }
+
+  .pile { text-align:center; }
+  .pile-label{ font-size:10px; text-transform:uppercase; letter-spacing:2px; color:rgba(244,236,216,0.5); margin-top:6px;}
+
+  .players-ring { display:flex; flex-wrap:wrap; justify-content:center; gap:26px; }
+
+  .pseat { text-align:center; }
+  .pname { font-size:13px; font-weight:600; margin-bottom:8px; display:flex; align-items:center; gap:6px; justify-content:center;}
+  .turn-dot { width:7px; height:7px; border-radius:50%; background:var(--gold); box-shadow:0 0 8px var(--gold); }
+  .grid2x2 { display:grid; grid-template-columns:repeat(2, 1fr); gap:6px; }
+
+  .card { width:54px; height:76px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:600; font-size:19px; cursor:default; user-select:none; position:relative; transition: transform .15s ease; border:1px solid rgba(0,0,0,0.25);}
+  .card.clickable{ cursor:pointer; }
+  .card.clickable:hover{ transform:translateY(-4px); }
+  .card.face-down { background: repeating-linear-gradient(135deg, #6B3F55, #6B3F55 6px, #5A3448 6px, #5A3448 12px); border:1px solid rgba(201,162,75,0.4); color:transparent; }
+  .card.face-down::after{ content:'\u2726'; color:var(--gold); font-size:14px; opacity:0.8; }
+  .card.face-up { background:var(--cream); color:var(--black); }
+  .card.face-up.red { color:var(--red); }
+  .card.empty { background:transparent; border:1px dashed rgba(244,236,216,0.2); }
+  .card.selected { outline:2px solid var(--gold); outline-offset:2px; }
+  .card.drawn-preview { outline:2px solid var(--gold); outline-offset:2px; }
+  .card.slap-target { outline:2px dashed var(--berry-bright); outline-offset:2px; }
+  .card.slap-target:hover{ outline-style:solid; }
+
+  .slapbar { display:flex; align-items:center; gap:10px; margin-top:14px; background:rgba(140,63,74,0.12); border:1px solid rgba(184,80,93,0.35); border-radius:14px; padding:12px 16px; flex-wrap:wrap; }
+  .slapbar .hint { flex:1; font-size:13px; min-width:200px; }
+
+  .drawoff-cards { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:16px 0; }
+  .drawoff-cards .who { font-size:12px; color:rgba(244,236,216,0.6); margin-top:6px; text-align:center; }
+
+  .drawpile { background: repeating-linear-gradient(135deg, #3B5B4C, #3B5B4C 6px, #345144 6px, #345144 12px); }
+
+  .actionbar { margin-top:18px; background:rgba(0,0,0,0.25); border:1px solid var(--line); border-radius:14px; padding:16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .actionbar .msg { flex:1; font-size:14px; min-width:200px; }
+  .actionbar .msg b{ color:var(--gold); }
+
+  .log { margin-top:14px; font-size:12px; color:rgba(244,236,216,0.55); display:flex; flex-direction:column; gap:3px; max-height:110px; overflow-y:auto;}
+
+  .scoreboard { margin-top:16px; background:rgba(0,0,0,0.22); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  .scoreboard table{ width:100%; border-collapse:collapse; font-size:13px;}
+  .scoreboard th, .scoreboard td{ text-align:center; padding:6px 8px; border-bottom:1px solid var(--line);}
+  .scoreboard th{ color:var(--gold); text-transform:uppercase; font-size:10px; letter-spacing:1px;}
+
+  .modal-back { position:fixed; inset:0; background:rgba(6,16,12,0.72); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px;}
+  .modal { background:var(--felt-1); border:1px solid var(--line); border-radius:18px; padding:28px; max-width:440px; width:100%; }
+
+  @media (max-width:640px){
+    .cactus-root{ padding:12px; }
+    .brand h1{ font-size:26px; }
+    .panel{ margin:24px auto; padding:20px; max-width:100%; }
+    .lobby-code .code{ font-size:30px; letter-spacing:5px; }
+    .topbar{ justify-content:center; text-align:center; }
+    .card{ width:46px; height:64px; font-size:16px; }
+    .players-ring{ gap:16px; }
+    .actionbar{ flex-direction:column; align-items:stretch; }
+    .actionbar .msg{ text-align:center; }
+    .actionbar .btn{ width:100%; }
+    .slapbar{ flex-direction:column; align-items:stretch; text-align:center; }
+    .slapbar .btn{ width:100%; }
+    .scoreboard{ overflow-x:auto; }
+    .field input{ font-size:16px; } /* \xE9vite le zoom auto iOS */
+  }
+  `;
+    if (!room) {
+      return /* @__PURE__ */ React.createElement("div", { className: "cactus-root" }, /* @__PURE__ */ React.createElement("style", null, STYLE), /* @__PURE__ */ React.createElement("div", { className: "brand" }, /* @__PURE__ */ React.createElement("span", { className: "brand-mark" }, "\u{1F335}"), /* @__PURE__ */ React.createElement("h1", null, "Cactus")), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("small", { style: { color: "var(--gold)", letterSpacing: 3, fontSize: 11, textTransform: "uppercase" } }, "Le jeu de cartes \xE0 distance")), /* @__PURE__ */ React.createElement("div", { className: "panel" }, /* @__PURE__ */ React.createElement("div", { className: "field" }, /* @__PURE__ */ React.createElement("label", null, "Ton pr\xE9nom"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          value: nameInput,
+          onChange: (e) => setNameInput(e.target.value),
+          placeholder: "Anne-Lou",
+          maxLength: 18
+        }
+      )), /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", style: { width: "100%" }, onClick: createRoom }, "Cr\xE9er une nouvelle partie"), /* @__PURE__ */ React.createElement("div", { className: "divider" }, "ou rejoindre une partie"), /* @__PURE__ */ React.createElement("div", { className: "field" }, /* @__PURE__ */ React.createElement("label", null, "Code de la partie"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          value: codeInput,
+          onChange: (e) => setCodeInput(e.target.value.toUpperCase()),
+          placeholder: "XXXXX",
+          maxLength: 6,
+          style: { letterSpacing: 4, textAlign: "center", fontFamily: "Fraunces, serif", fontSize: 20 }
+        }
+      )), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { width: "100%" }, onClick: joinRoom }, "Rejoindre"), error && /* @__PURE__ */ React.createElement("div", { className: "err" }, error)), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: "rgba(244,236,216,0.45)", maxWidth: 420, margin: "0 auto" } }, "Envoie le code de la partie \xE0 tes amis pour qu'ils rejoignent depuis ce m\xEAme lien, o\xF9 qu'ils soient."));
+    }
+    const others = room.players.filter((p) => me && p.id !== me.id);
+    const seatOrder = me ? [room.players.find((p) => p.id === me.id), ...others].filter(Boolean) : room.players;
+    function myVisibleCard(ownerId, card) {
+      var _a2, _b2;
+      const expiry = (_b2 = (_a2 = room.reveal) == null ? void 0 : _a2[me == null ? void 0 : me.id]) == null ? void 0 : _b2[card.id];
+      if (expiry && expiry > now) return true;
+      if (myPeek[card.id] && myPeek[card.id] > now) return true;
+      return false;
+    }
+    function renderCard(ownerId, idx, isMe) {
+      var _a2, _b2, _c2, _d2;
+      const hand = (_a2 = room.hands) == null ? void 0 : _a2[ownerId];
+      if (!hand) return /* @__PURE__ */ React.createElement("div", { key: idx, className: "card empty" });
+      const card = hand[idx];
+      if (!card) return /* @__PURE__ */ React.createElement("div", { key: idx, className: "card empty" });
+      const revealAtEnd = room.phase === "roundEnd" || room.phase === "gameEnd";
+      const visible = revealAtEnd || myVisibleCard(ownerId, card);
+      const selected = selection && selection.owner === ownerId && selection.idx === idx;
+      let clickable = false;
+      let isSlapTarget = false;
+      if (slapMode && isMe && room.phase === "playing") {
+        clickable = true;
+        isSlapTarget = true;
+      } else if (room.phase === "playing" && myTurn) {
+        if (room.turnPhase === "awaitDecision" && isMe) clickable = true;
+        if (room.turnPhase === "awaitPower" && room.power) {
+          const pw = room.power;
+          if (pw.type === "peekOwn" && isMe) clickable = true;
+          if (pw.type === "peekOpp" && !isMe) clickable = true;
+          if (pw.type === "peekAny") clickable = true;
+          if (pw.type === "blindSwap") clickable = true;
+          if (pw.type === "kingLook") clickable = true;
+        }
+      }
+      const cancelled = ((_d2 = (_c2 = (_b2 = room.roundResults) == null ? void 0 : _b2[ownerId]) == null ? void 0 : _c2.cancelled) == null ? void 0 : _d2.includes(idx)) && revealAtEnd;
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: idx,
+          className: `card ${visible ? "face-up" : "face-down"} ${visible && isRed(card.s) ? "red" : ""} ${clickable ? "clickable" : ""} ${selected ? "selected" : ""} ${isSlapTarget ? "slap-target" : ""}`,
+          style: cancelled ? { opacity: 0.35 } : void 0,
+          onClick: () => clickable && (isSlapTarget ? attemptSlap(idx) : handleCardClick(ownerId, idx)),
+          title: clickable ? "Cliquer" : void 0
+        },
+        visible ? `${label(card.r)}${card.s}` : ""
+      );
+    }
+    return /* @__PURE__ */ React.createElement("div", { className: "cactus-root" }, /* @__PURE__ */ React.createElement("style", null, STYLE), /* @__PURE__ */ React.createElement("div", { className: "table-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "topbar" }, /* @__PURE__ */ React.createElement("div", { className: "brand", style: { marginBottom: 0 } }, /* @__PURE__ */ React.createElement("span", { className: "brand-mark", style: { fontSize: 22 } }, "\u{1F335}"), /* @__PURE__ */ React.createElement("h1", { style: { fontSize: 20 } }, "Cactus")), /* @__PURE__ */ React.createElement("div", { className: "roomchip" }, "Salon ", /* @__PURE__ */ React.createElement("b", null, room.code), " \xB7 ", room.players.length, " joueur(s)"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: leaveRoom }, "Quitter")), room.phase === "lobby" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto" } }, /* @__PURE__ */ React.createElement("div", { className: "lobby-code" }, /* @__PURE__ */ React.createElement("div", { className: "code" }, room.code), /* @__PURE__ */ React.createElement("div", { className: "hint" }, "Partage ce code avec tes amis")), /* @__PURE__ */ React.createElement("ul", { className: "plist" }, room.players.map((p) => /* @__PURE__ */ React.createElement("li", { key: p.id }, p.name, p.id === room.hostId && /* @__PURE__ */ React.createElement("span", { className: "tag" }, "H\xF4te")))), isHost ? /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "btn btn-gold",
+        style: { width: "100%" },
+        disabled: room.players.length < 2,
+        onClick: startGame
+      },
+      room.players.length < 2 ? "En attente d'un 2e joueur\u2026" : "D\xE9marrer la partie"
+    ) : /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontSize: 13, color: "rgba(244,236,216,0.6)" } }, "En attente que l'h\xF4te d\xE9marre la partie\u2026")), room.phase === "drawoff" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto", textAlign: "center", maxWidth: 560 } }, /* @__PURE__ */ React.createElement("div", { className: "disp", style: { fontSize: 18, marginBottom: 4 } }, "Tirage au sort"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(244,236,216,0.55)", marginBottom: 6 } }, "La carte la plus basse commence la partie\u2026"), /* @__PURE__ */ React.createElement("div", { className: "drawoff-cards" }, room.players.map((p) => {
+      var _a2;
+      const c = (_a2 = room.drawoffCards) == null ? void 0 : _a2[p.id];
+      if (!c) return null;
+      return /* @__PURE__ */ React.createElement("div", { key: p.id }, /* @__PURE__ */ React.createElement("div", { className: `card face-up ${isRed(c.s) ? "red" : ""}` }, label(c.r), c.s), /* @__PURE__ */ React.createElement("div", { className: "who" }, p.id === me.id ? "Toi" : p.name));
+    }))), room.phase === "peek" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "disp", style: { fontSize: 18, marginBottom: 10 } }, "M\xE9morise tes deux cartes du bas !"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2", style: { width: 120, margin: "0 auto" } }, [0, 1, 2, 3].map((i) => renderCard(me.id, i, true))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14, fontSize: 12, color: "rgba(244,236,216,0.55)" } }, "Elles se retournent automatiquement dans quelques secondes\u2026")), (room.phase === "playing" || room.phase === "roundEnd" || room.phase === "gameEnd") && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table" }, /* @__PURE__ */ React.createElement("div", { className: "players-ring" }, seatOrder.map((p) => {
+      var _a2, _b2;
+      const isMe = p.id === me.id;
+      const isTurn = room.order[room.turnIdx] === p.id;
+      return /* @__PURE__ */ React.createElement("div", { className: "pseat", key: p.id }, /* @__PURE__ */ React.createElement("div", { className: "pname" }, isTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), isMe ? "Toi" : p.name, room.cactusBy === p.id && " \u{1F335}", ((_a2 = room.outPlayers) == null ? void 0 : _a2[p.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2" }, [0, 1, 2, 3].map((i) => renderCard(p.id, i, isMe))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b2 = room.roundResults) == null ? void 0 : _b2[p.id]) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, fontSize: 12, color: "var(--gold)" } }, room.roundResults[p.id].total, " pts", room.roundResults[p.id].doubled && " (x2 !)"));
+    })), /* @__PURE__ */ React.createElement("div", { className: "center-piles" }, /* @__PURE__ */ React.createElement("div", { className: "pile" }, /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        className: `card drawpile face-down ${myTurn && room.turnPhase === "awaitDraw" ? "clickable" : ""}`,
+        onClick: () => myTurn && room.turnPhase === "awaitDraw" && drawFrom("deck")
+      }
+    ), /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "Pioche (", room.deck.length, ")")), /* @__PURE__ */ React.createElement("div", { className: "pile" }, room.discard.length > 0 ? /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        className: `card face-up ${isRed(room.discard[room.discard.length - 1].s) ? "red" : ""} ${myTurn && room.turnPhase === "awaitDraw" ? "clickable" : ""}`,
+        onClick: () => myTurn && room.turnPhase === "awaitDraw" && drawFrom("discard")
+      },
+      label(room.discard[room.discard.length - 1].r),
+      room.discard[room.discard.length - 1].s
+    ) : /* @__PURE__ */ React.createElement("div", { className: "card empty" }), /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "D\xE9fausse")), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "pile" }, /* @__PURE__ */ React.createElement("div", { className: `card face-up drawn-preview ${isRed(room.drawn.card.s) ? "red" : ""}` }, label(room.drawn.card.r), room.drawn.card.s), /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "Ta pioche")))), /* @__PURE__ */ React.createElement("div", { className: "actionbar" }, room.phase === "playing" && /* @__PURE__ */ React.createElement("div", { className: "msg" }, (() => {
+      var _a2;
+      if (!myTurn) {
+        return /* @__PURE__ */ React.createElement("span", null, "Tour de ", /* @__PURE__ */ React.createElement("b", null, (_a2 = room.players.find((p) => p.id === room.order[room.turnIdx])) == null ? void 0 : _a2.name), "\u2026");
+      }
+      if (room.turnPhase === "awaitDraw") {
+        return /* @__PURE__ */ React.createElement("span", null, "\xC0 toi de jouer \u2014 ", /* @__PURE__ */ React.createElement("b", null, "pioche"), " une carte, ou appelle Cactus.");
+      }
+      if (room.turnPhase === "awaitDecision") {
+        return /* @__PURE__ */ React.createElement("span", null, "Choisis une de ", /* @__PURE__ */ React.createElement("b", null, "tes cartes"), " \xE0 \xE9changer, ou d\xE9fausse ta carte pioch\xE9e.");
+      }
+      if (room.turnPhase === "awaitPower" && room.power) {
+        return /* @__PURE__ */ React.createElement("span", null, "Pouvoir : ", /* @__PURE__ */ React.createElement("b", null, powerLabel(room.power.type)), room.power.type === "kingLook" && room.power.stage === 2 && " \u2014 \xE9change ou passe.");
+      }
+      return null;
+    })()), room.phase === "playing" && myTurn && room.turnPhase === "awaitDraw" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-berry", onClick: callCactus, disabled: busy }, "\u{1F335} Appeler Cactus !"), room.phase === "playing" && myTurn && room.turnPhase === "awaitDecision" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: discardDrawnAndMaybePower, disabled: busy }, "D\xE9fausser", room.drawn && powerOf(room.drawn.card.r) ? " & activer le pouvoir" : ""), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_a = room.power) == null ? void 0 : _a.type) !== "kingLook" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: skipPower, disabled: busy }, "Passer"), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_b = room.power) == null ? void 0 : _b.type) === "kingLook" && room.power.stage === 2 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: declineKingSwap, disabled: busy }, "Ne pas \xE9changer"), room.phase === "roundEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: nextRound, disabled: busy }, "Manche suivante"), room.phase === "gameEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: newGame, disabled: busy }, "Nouvelle partie"), (room.phase === "roundEnd" || room.phase === "gameEnd") && !isHost && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: "rgba(244,236,216,0.6)" } }, "En attente de l'h\xF4te\u2026")), room.phase === "playing" && !((_c = room.outPlayers) == null ? void 0 : _c[me.id]) && /* @__PURE__ */ React.createElement("div", { className: "slapbar" }, /* @__PURE__ */ React.createElement("div", { className: "hint" }, slapMode ? "Clique sur une de tes cartes pour la poser sur la d\xE9fausse \u2014 \xE0 tout moment, m\xEAme hors de ton tour." : "As-tu la m\xEAme carte que le dessus de la d\xE9fausse ? Pose-la \xE0 la vol\xE9e pour t'en d\xE9barrasser."), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: slapMode ? "btn btn-ghost" : "btn btn-berry",
+        onClick: () => setSlapMode((v) => !v),
+        disabled: busy
+      },
+      slapMode ? "Annuler" : "\u26A1 Poser \xE0 la vol\xE9e"
+    )), /* @__PURE__ */ React.createElement("div", { className: "scoreboard" }, /* @__PURE__ */ React.createElement("table", null, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Joueur"), (room.scores[(_d = room.players[0]) == null ? void 0 : _d.id] || []).map((_, i) => /* @__PURE__ */ React.createElement("th", { key: i }, "M", i + 1)), /* @__PURE__ */ React.createElement("th", null, "Total"))), /* @__PURE__ */ React.createElement("tbody", null, room.players.map((p) => {
+      const s = room.scores[p.id] || [];
+      return /* @__PURE__ */ React.createElement("tr", { key: p.id }, /* @__PURE__ */ React.createElement("td", { style: { textAlign: "left" } }, p.name), s.map((v, i) => /* @__PURE__ */ React.createElement("td", { key: i }, v)), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--gold)", fontWeight: 700 } }, s.reduce((a, b) => a + b, 0)));
+    })))), /* @__PURE__ */ React.createElement("div", { className: "log" }, room.log.map((l, i) => /* @__PURE__ */ React.createElement("div", { key: i }, l.text)))), room.phase === "gameEnd" && /* @__PURE__ */ React.createElement("div", { className: "modal-back" }, /* @__PURE__ */ React.createElement("div", { className: "modal" }, /* @__PURE__ */ React.createElement("div", { className: "disp", style: { fontSize: 24, marginBottom: 6 } }, "\u{1F335} Partie termin\xE9e"), (() => {
+      const totals = room.players.map((p) => ({
+        name: p.name,
+        sum: (room.scores[p.id] || []).reduce((a, b) => a + b, 0)
+      })).sort((a, b) => a.sum - b.sum);
+      return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, totals.map((t, i) => /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: t.name,
+          style: {
+            display: "flex",
+            justifyContent: "space-between",
+            padding: "8px 0",
+            borderBottom: "1px solid var(--line)",
+            fontSize: 15
+          }
+        },
+        /* @__PURE__ */ React.createElement("span", null, i === 0 ? "\u{1F3C6} " : "", t.name),
+        /* @__PURE__ */ React.createElement("b", { style: { color: "var(--gold)" } }, t.sum)
+      )));
+    })(), isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", style: { width: "100%", marginTop: 18 }, onClick: newGame }, "Rejouer"), !isHost && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, fontSize: 13, textAlign: "center", color: "rgba(244,236,216,0.6)" } }, "En attente que l'h\xF4te relance une partie\u2026")))));
+  }
+  if (firebaseConfig.apiKey !== "REPLACE_ME") {
+    try {
+      ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(CactusGame, null));
+    } catch (e) {
+      document.getElementById("boot-error-msg").textContent = e && e.stack || String(e);
+      document.getElementById("boot-error").style.display = "block";
+    }
+  }
+})();
+
+</script>
+</body>
+</html>
