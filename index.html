@@ -246,22 +246,11 @@
     return [...ids.slice(i), ...ids.slice(0, i)];
   }
   function computeHandScore(hand) {
-    const cols = [
-      [0, 2],
-      [1, 3]
-    ];
     let total = 0;
-    const cancelled = /* @__PURE__ */ new Set();
-    for (const [a, b] of cols) {
-      if (hand[a] && hand[b] && hand[a].r === hand[b].r) {
-        cancelled.add(a);
-        cancelled.add(b);
-      }
-    }
-    hand.forEach((c, i) => {
-      if (c && !cancelled.has(i)) total += cardValue(c.r, c.s);
+    hand.forEach((c) => {
+      if (c) total += cardValue(c.r, c.s);
     });
-    return { total, cancelled: [...cancelled] };
+    return { total, cancelled: [] };
   }
   function checkEmptyHand(state, playerId) {
     if (isHandEmpty(state.hands[playerId])) {
@@ -1301,7 +1290,10 @@
         className: "drag-ghost",
         style: { left: drag.x, top: drag.y }
       },
-      /* @__PURE__ */ React.createElement("div", { className: `card face-up ${isRed(drag.card.s) ? "red" : ""}` }, label(drag.card.r), drag.card.s)
+      (() => {
+        const dragVisible = myVisibleCard(me.id, drag.card);
+        return /* @__PURE__ */ React.createElement("div", { className: `card ${dragVisible ? "face-up" : "face-down"} ${dragVisible && isRed(drag.card.s) ? "red" : ""}` }, dragVisible ? `${label(drag.card.r)}${drag.card.s}` : "");
+      })()
     )), /* @__PURE__ */ React.createElement("div", { className: "my-area" }, /* @__PURE__ */ React.createElement("div", { className: `pname ${myTurn ? "pname-active" : ""}` }, myTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), "Toi", room.cactusBy === me.id && " \u{1F335}", ((_a = room.outPlayers) == null ? void 0 : _a[me.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2 grid2x2-mine" }, [0, 1, 2, 3].map((i) => renderCard(me.id, i, true))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b = room.roundResults) == null ? void 0 : _b[me.id]) && /* @__PURE__ */ React.createElement("div", { className: "pts-tag" }, room.roundResults[me.id].total, " pts", room.roundResults[me.id].doubled && " (x2 !)"))), /* @__PURE__ */ React.createElement("div", { className: "actionbar" }, room.phase === "playing" && /* @__PURE__ */ React.createElement("div", { className: "msg" }, (() => {
       var _a2;
       if (!myTurn) {
