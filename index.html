@@ -17,7 +17,7 @@
   #boot-error { display:none; position:fixed; inset:0; background:#2A1414; color:#F4ECD8; font-family: ui-monospace, monospace; padding:24px; box-sizing:border-box; overflow:auto; z-index:9999; white-space:pre-wrap; font-size:13px; }
   #boot-error h2 { color:#F0A8A8; font-family: system-ui, sans-serif; }
   #version-badge {
-    position:fixed; bottom:8px; right:10px; z-index:10000;
+    position:fixed; top:calc(6px + env(safe-area-inset-top)); right:10px; z-index:10000;
     font-family: ui-monospace, monospace; font-size:11px;
     color:rgba(244,236,216,0.45); background:rgba(0,0,0,0.25);
     padding:3px 8px; border-radius:6px; pointer-events:none;
@@ -52,7 +52,7 @@
   <div id="boot-error-msg"></div>
   <p style="opacity:0.7">(Vérifie ta configuration Firebase en haut du script, et que la Realtime Database est bien activée.)</p>
 </div>
-<div id="version-badge">v1</div>
+<div id="version-badge">v2</div>
 
 <script>
   window.addEventListener("error", function (e) {
@@ -1164,22 +1164,36 @@
   }
 
   @media (max-width:640px){
-    .cactus-root{ padding:12px; }
-    .brand h1{ font-size:26px; }
-    .panel{ margin:24px auto; padding:20px; max-width:100%; }
+    .cactus-root{ padding:10px; padding-bottom:0; }
+    .brand h1{ font-size:22px; }
+    .panel{ margin:20px auto; padding:18px; max-width:100%; }
     .lobby-code .code{ font-size:30px; letter-spacing:5px; }
-    .topbar{ justify-content:center; text-align:center; }
-    .table{ padding:16px 10px; gap:16px; }
-    .opponents-row{ gap:14px; padding-bottom:14px; }
-    .piles-row{ gap:20px; padding:12px 16px; }
-    .card{ width:44px; height:60px; font-size:15px; }
-    .grid2x2-mine .card{ width:58px; height:80px; font-size:19px; }
-    .drag-ghost .card{ width:58px; height:80px; font-size:19px; }
-    .card.drawn-preview{ width:52px; height:72px; font-size:17px; }
-    .drawn-banner{ flex-direction:column; text-align:center; }
-    .actionbar{ flex-direction:column; align-items:stretch; }
-    .actionbar .msg{ text-align:center; }
-    .actionbar .btn{ width:100%; }
+    .topbar{ justify-content:center; text-align:center; margin-bottom:8px; }
+    .table{ padding:12px 8px; gap:10px; }
+    .table-wrap{ padding-bottom:calc(170px + env(safe-area-inset-bottom)); }
+    .opponents-row{ gap:8px; padding-bottom:10px; }
+    .pname{ font-size:11px; margin-bottom:5px; padding:2px 8px; }
+    .grid2x2{ gap:4px; }
+    .piles-row{ gap:14px; padding:8px 12px; }
+    .pile-label{ font-size:9px; margin-top:4px; }
+    .card{ width:36px; height:50px; font-size:13px; }
+    .grid2x2-mine{ gap:6px; }
+    .grid2x2-mine .card{ width:48px; height:66px; font-size:16px; }
+    .drag-ghost .card{ width:48px; height:66px; font-size:16px; }
+    .card.drawn-preview{ width:44px; height:60px; font-size:15px; }
+    .drawn-banner{ flex-direction:column; text-align:center; padding:8px 12px; }
+    .my-area{ padding-top:2px; gap:6px; }
+    .center-zone{ gap:8px; }
+    .actionbar{
+      position:fixed; left:0; right:0; bottom:0; margin-top:0;
+      border-radius:16px 16px 0 0; z-index:80;
+      box-shadow: 0 -6px 20px rgba(0,0,0,0.4);
+      padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+      flex-direction:column; align-items:stretch;
+      max-height:40vh; overflow-y:auto;
+    }
+    .actionbar .msg{ text-align:center; font-size:13px; }
+    .actionbar .btn{ width:100%; padding:11px 16px; }
     .scoreboard{ overflow-x:auto; }
     .field input{ font-size:16px; } /* \xE9vite le zoom auto iOS */
   }
