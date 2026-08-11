@@ -123,7 +123,6 @@
   }
   function powerOf(r) {
     if (r === 7 || r === 8) return "peekOwn";
-    if (r === 9 || r === 10) return "peekOpp";
     if (r === 11) return "blindSwap";
     if (r === 12) return "peekAny";
     if (r === 13) return "kingLook";
@@ -132,7 +131,6 @@
   function powerLabel(t) {
     return {
       peekOwn: "Regarder une de ses cartes",
-      peekOpp: "Regarder une carte adverse",
       peekAny: "Regarder une carte (la sienne ou une adverse)",
       blindSwap: "\xC9changer deux cartes \xE0 l'aveugle (facultatif)",
       kingLook: "Regarder une carte, puis \xE9changer si tu veux"
@@ -316,6 +314,136 @@
     pushLog(state, "Manche termin\xE9e \u2014 cartes r\xE9v\xE9l\xE9es.");
     return state;
   }
+  function botHandName(state, botId) {
+    const p = state.players.find((pp) => pp.id === botId);
+    return p ? p.name : "Bot";
+  }
+  function botHandlePower(state, botId) {
+    const pw = state.power;
+    const botName = botHandName(state, botId);
+    if (pw.type === "blindSwap") {
+      const hand = state.hands[botId] || [];
+      let worstIdx = -1, worstVal = -Infinity;
+      hand.forEach((c, i) => {
+        if (!c) return;
+        const v = cardValue(c.r, c.s);
+        if (v > worstVal) {
+          worstVal = v;
+          worstIdx = i;
+        }
+      });
+      const opponents = state.players.filter(
+        (p) => p.id !== botId && !(state.outPlayers && state.outPlayers[p.id])
+      );
+      if (worstIdx !== -1 && worstVal > 4 && opponents.length && Math.random() < 0.5) {
+        const opp = opponents[Math.floor(Math.random() * opponents.length)];
+        const oppHand = state.hands[opp.id] || [];
+        const validIdxs = [0, 1, 2, 3].filter((i) => oppHand[i]);
+        if (validIdxs.length) {
+          const oi = validIdxs[Math.floor(Math.random() * validIdxs.length)];
+          const tmp = state.hands[botId][worstIdx];
+          state.hands[botId][worstIdx] = oppHand[oi];
+          oppHand[oi] = tmp;
+          pushLog(state, `${botName} \xE9change deux cartes \xE0 l'aveugle.`);
+          return advanceTurn(state);
+        }
+      }
+      pushLog(state, `${botName} passe son pouvoir.`);
+      return advanceTurn(state);
+    }
+    if (pw.type === "kingLook") {
+      pushLog(state, `${botName} regarde une carte, puis la laisse en place.`);
+      return advanceTurn(state);
+    }
+    if (pw.type === "peekOwn") {
+      pushLog(state, `${botName} regarde une de ses cartes.`);
+      return advanceTurn(state);
+    }
+    if (pw.type === "peekAny") {
+      pushLog(state, `${botName} regarde une carte.`);
+      return advanceTurn(state);
+    }
+    return advanceTurn(state);
+  }
+  function botStep(state, botId) {
+    const hand = state.hands[botId] || [];
+    if (state.turnPhase === "awaitDraw") {
+      const botName = botHandName(state, botId);
+      if (!state.cactusBy) {
+        const { total } = computeHandScore(hand);
+        if (total <= 4 && Math.random() < 0.6) {
+          const activeCount = state.order.filter(
+            (id) => !state.outPlayers || !state.outPlayers[id]
+          ).length;
+          state.cactusBy = botId;
+          state.finalLeft = activeCount;
+          pushLog(state, `\u{1F335} ${botName} appelle CACTUS !`);
+          return advanceTurn(state);
+        }
+      }
+      const topDiscard = state.discard[state.discard.length - 1];
+      let source = "deck";
+      if (topDiscard) {
+        const discardVal = cardValue(topDiscard.r, topDiscard.s);
+        let worstVal = -Infinity;
+        hand.forEach((c) => {
+          if (c) {
+            const v = cardValue(c.r, c.s);
+            if (v > worstVal) worstVal = v;
+          }
+        });
+        if (discardVal < worstVal - 1) source = "discard";
+      }
+      let card;
+      if (source === "deck") {
+        if (state.deck.length === 0) return state;
+        card = state.deck.pop();
+      } else {
+        if (state.discard.length === 0) return state;
+        card = state.discard.pop();
+      }
+      state.drawn = { by: botId, card, from: source };
+      state.turnPhase = "awaitDecision";
+      return state;
+    }
+    if (state.turnPhase === "awaitDecision" && state.drawn) {
+      const botName = botHandName(state, botId);
+      const card = state.drawn.card;
+      const drawnValue = cardValue(card.r, card.s);
+      let worstIdx = -1, worstVal = -Infinity;
+      hand.forEach((c, i) => {
+        if (!c) return;
+        const v = cardValue(c.r, c.s);
+        if (v > worstVal) {
+          worstVal = v;
+          worstIdx = i;
+        }
+      });
+      if (worstIdx !== -1 && drawnValue < worstVal) {
+        const old = hand[worstIdx];
+        hand[worstIdx] = card;
+        state.discard.push(old);
+        pushLog(state, `${botName} a \xE9chang\xE9 une carte.`);
+        state.drawn = null;
+        return advanceTurn(state);
+      }
+      state.discard.push(card);
+      const pw = powerOf(card.r);
+      state.drawn = null;
+      if (pw) {
+        state.power = { type: pw, by: botId, stage: 1, first: null };
+        state.turnPhase = "awaitPower";
+        pushLog(state, `${botName} d\xE9fausse un ${label(card.r)} — ${powerLabel(pw)}.`);
+        return state;
+      }
+      pushLog(state, `${botName} d\xE9fausse un ${label(card.r)}.`);
+      return advanceTurn(state);
+    }
+    if (state.turnPhase === "awaitPower" && state.power) {
+      return botHandlePower(state, botId);
+    }
+    return advanceTurn(state);
+  }
   function advanceTurn(state) {
     if (state.cactusBy) {
       state.finalLeft -= 1;
@@ -358,7 +486,10 @@
     const [flashSlot, setFlashSlot] = useState(null);
     const [myPeek, setMyPeek] = useState({});
     const [now, setNow] = useState(Date.now());
+    const [cactusBanner, setCactusBanner] = useState(null);
     const discardRef = useRef(null);
+    const busyRef = useRef(false);
+    const prevCactusByRef = useRef(null);
     const DRAG_THRESHOLD = 10;
     useEffect(() => {
       const t = setInterval(() => setNow(Date.now()), 300);
@@ -390,7 +521,8 @@
       return () => ref.off("value", cb);
     }, [room == null ? void 0 : room.code]);
     async function withRoom(mutator) {
-      if (!(room == null ? void 0 : room.code) || busy) return;
+      if (!(room == null ? void 0 : room.code) || busyRef.current) return;
+      busyRef.current = true;
       setBusy(true);
       try {
         const result = await roomRef(room.code).transaction((current) => {
@@ -403,7 +535,10 @@
         if (result.committed && result.snapshot.exists()) {
           setRoom(hydrate(result.snapshot.val()));
         }
+      } catch (e) {
+        console.error("withRoom transaction failed:", e);
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     }
@@ -462,6 +597,25 @@
       await withRoom((s) => {
         if (s.players.length < 2) return null;
         return startDrawoff(s);
+      });
+    }
+    async function addBot() {
+      await withRoom((s) => {
+        if (s.phase !== "lobby") return null;
+        if (s.players.length >= 6) return null;
+        const botCount = s.players.filter((p) => p.isBot).length + 1;
+        const id = "bot-" + uid();
+        const name = `Bot ${botCount}`;
+        s.players.push({ id, name, isBot: true });
+        pushLog(s, `${name} rejoint la partie.`);
+        return s;
+      });
+    }
+    async function removeBot(id) {
+      await withRoom((s) => {
+        if (s.phase !== "lobby") return null;
+        s.players = s.players.filter((p) => p.id !== id);
+        return s;
       });
     }
     useEffect(() => {
@@ -538,6 +692,25 @@
         return () => clearTimeout(t);
       }
     }, [room == null ? void 0 : room.turnIdx, room == null ? void 0 : room.phase, room == null ? void 0 : room.turnPhase]);
+    useEffect(() => {
+      if (!room || !isHost || room.phase !== "playing") return;
+      const currentId = room.order[room.turnIdx];
+      const bot = room.players.find((p) => p.id === currentId && p.isBot);
+      if (!bot) return;
+      if (room.outPlayers && room.outPlayers[currentId]) return;
+      let cancelled = false;
+      const t = setTimeout(() => {
+        if (cancelled) return;
+        withRoom((s) => {
+          if (s.phase !== "playing" || s.order[s.turnIdx] !== bot.id) return null;
+          return botStep(s, bot.id);
+        });
+      }, 700 + Math.random() * 600);
+      return () => {
+        cancelled = true;
+        clearTimeout(t);
+      };
+    }, [room == null ? void 0 : room.turnIdx, room == null ? void 0 : room.phase, room == null ? void 0 : room.turnPhase, room == null ? void 0 : room.power == null ? void 0 : room.power.stage, room == null ? void 0 : room.drawn == null ? void 0 : room.drawn.card == null ? void 0 : room.drawn.card.id, isHost, room == null ? void 0 : room.code]);
     async function drawFrom(source) {
       if (!myTurn || room.turnPhase !== "awaitDraw") return;
       await withRoom((s) => {
@@ -612,13 +785,6 @@
             const card = s.hands[ownerId][slotIdx];
             broadcastPeek(s, me.id, card);
             pushLog(s, `${me.name} regarde une de ses cartes.`);
-            return advanceTurn(s);
-          });
-        } else if (pw.type === "peekOpp" && ownerId !== me.id) {
-          await withRoom((s) => {
-            const card = s.hands[ownerId][slotIdx];
-            broadcastPeek(s, me.id, card);
-            pushLog(s, `${me.name} regarde une carte adverse.`);
             return advanceTurn(s);
           });
         } else if (pw.type === "peekAny") {
@@ -784,6 +950,17 @@
     function onMyCardPointerCancel() {
       setDrag(null);
     }
+    useEffect(() => {
+      const cur = (room == null ? void 0 : room.cactusBy) || null;
+      if (cur && cur !== prevCactusByRef.current) {
+        const caller = room.players.find((p) => p.id === cur);
+        setCactusBanner((caller == null ? void 0 : caller.name) || "Un joueur");
+        const t = setTimeout(() => setCactusBanner(null), 2800);
+        prevCactusByRef.current = cur;
+        return () => clearTimeout(t);
+      }
+      prevCactusByRef.current = cur;
+    }, [room == null ? void 0 : room.cactusBy]);
     async function callCactus() {
       if (!myTurn || room.turnPhase !== "awaitDraw") return;
       await withRoom((s) => {
@@ -958,6 +1135,35 @@
   .modal-back { position:fixed; inset:0; background:rgba(6,16,12,0.72); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px;}
   .modal { background:var(--felt-1); border:1px solid var(--line); border-radius:18px; padding:28px; max-width:440px; width:100%; }
 
+  .cactus-banner-overlay {
+    position:fixed; inset:0; z-index:100;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(6,16,12,0.45);
+    pointer-events:none;
+    animation: cactus-banner-fade 2.8s ease forwards;
+  }
+  .cactus-banner-box { text-align:center; }
+  .cactus-banner-emoji { font-size:clamp(48px,14vw,110px); line-height:1; animation: cactus-banner-pop 0.55s cubic-bezier(.34,1.56,.64,1); }
+  .cactus-banner-title {
+    font-family:'Fraunces',serif; font-weight:700; font-style:italic;
+    font-size:clamp(40px,11vw,96px); color:var(--gold);
+    text-shadow: 0 0 40px rgba(201,162,75,0.7), 0 4px 14px rgba(0,0,0,0.5);
+    animation: cactus-banner-pop 0.55s cubic-bezier(.34,1.56,.64,1);
+  }
+  .cactus-banner-sub {
+    margin-top:10px; font-family:'Inter',sans-serif; font-weight:600;
+    font-size:clamp(15px,3vw,22px); color:var(--cream); letter-spacing:0.5px;
+  }
+  @keyframes cactus-banner-pop {
+    0% { transform:scale(0.3) rotate(-6deg); opacity:0; }
+    60% { transform:scale(1.15) rotate(2deg); opacity:1; }
+    100% { transform:scale(1) rotate(0deg); opacity:1; }
+  }
+  @keyframes cactus-banner-fade {
+    0%, 75% { opacity:1; }
+    100% { opacity:0; }
+  }
+
   @media (max-width:640px){
     .cactus-root{ padding:12px; }
     .brand h1{ font-size:26px; }
@@ -1022,7 +1228,6 @@
         if (room.turnPhase === "awaitPower" && room.power) {
           const pw = room.power;
           if (pw.type === "peekOwn" && isMe) clickable = true;
-          if (pw.type === "peekOpp" && !isMe) clickable = true;
           if (pw.type === "peekAny") clickable = true;
           if (pw.type === "blindSwap") clickable = true;
           if (pw.type === "kingLook") clickable = true;
@@ -1048,7 +1253,7 @@
         visible ? `${label(card.r)}${card.s}` : ""
       );
     }
-    return /* @__PURE__ */ React.createElement("div", { className: "cactus-root" }, /* @__PURE__ */ React.createElement("style", null, STYLE), /* @__PURE__ */ React.createElement("div", { className: "table-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "topbar" }, /* @__PURE__ */ React.createElement("div", { className: "brand", style: { marginBottom: 0 } }, /* @__PURE__ */ React.createElement("span", { className: "brand-mark", style: { fontSize: 22 } }, "\u{1F335}"), /* @__PURE__ */ React.createElement("h1", { style: { fontSize: 20 } }, "Cactus")), /* @__PURE__ */ React.createElement("div", { className: "roomchip" }, "Salon ", /* @__PURE__ */ React.createElement("b", null, room.code), " \xB7 ", room.players.length, " joueur(s)"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: leaveRoom }, "Quitter")), room.phase === "lobby" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto" } }, /* @__PURE__ */ React.createElement("div", { className: "lobby-code" }, /* @__PURE__ */ React.createElement("div", { className: "code" }, room.code), /* @__PURE__ */ React.createElement("div", { className: "hint" }, "Partage ce code avec tes amis")), /* @__PURE__ */ React.createElement("ul", { className: "plist" }, room.players.map((p) => /* @__PURE__ */ React.createElement("li", { key: p.id }, p.name, p.id === room.hostId && /* @__PURE__ */ React.createElement("span", { className: "tag" }, "H\xF4te")))), isHost ? /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "cactus-root" }, /* @__PURE__ */ React.createElement("style", null, STYLE), cactusBanner && /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-box" }, /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-emoji" }, "\u{1F335}"), /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-title" }, "CACTUS !"), /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-sub" }, `${cactusBanner} appelle Cactus !`))), /* @__PURE__ */ React.createElement("div", { className: "table-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "topbar" }, /* @__PURE__ */ React.createElement("div", { className: "brand", style: { marginBottom: 0 } }, /* @__PURE__ */ React.createElement("span", { className: "brand-mark", style: { fontSize: 22 } }, "\u{1F335}"), /* @__PURE__ */ React.createElement("h1", { style: { fontSize: 20 } }, "Cactus")), /* @__PURE__ */ React.createElement("div", { className: "roomchip" }, "Salon ", /* @__PURE__ */ React.createElement("b", null, room.code), " \xB7 ", room.players.length, " joueur(s)"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: leaveRoom }, "Quitter")), room.phase === "lobby" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto" } }, /* @__PURE__ */ React.createElement("div", { className: "lobby-code" }, /* @__PURE__ */ React.createElement("div", { className: "code" }, room.code), /* @__PURE__ */ React.createElement("div", { className: "hint" }, "Partage ce code avec tes amis")), /* @__PURE__ */ React.createElement("ul", { className: "plist" }, room.players.map((p) => /* @__PURE__ */ React.createElement("li", { key: p.id }, /* @__PURE__ */ React.createElement("span", null, p.isBot ? "\u{1F916} " : "", p.name), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 6, alignItems: "center" } }, p.id === room.hostId && /* @__PURE__ */ React.createElement("span", { className: "tag" }, "H\xF4te"), p.isBot && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { padding: "2px 8px", fontSize: 11 }, onClick: () => removeBot(p.id) }, "Retirer"))))), isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { width: "100%", marginBottom: 10 }, disabled: room.players.length >= 6, onClick: addBot }, "\u{1F916} Ajouter un bot"), isHost ? /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "btn btn-gold",
@@ -1065,7 +1270,7 @@
     }))), room.phase === "peek" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "disp", style: { fontSize: 18, marginBottom: 10 } }, "M\xE9morise tes deux cartes du bas !"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2", style: { width: 120, margin: "0 auto" } }, [0, 1, 2, 3].map((i) => renderCard(me.id, i, true))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14, fontSize: 12, color: "rgba(244,236,216,0.55)" } }, "Elles se retournent automatiquement dans quelques secondes\u2026")), (room.phase === "playing" || room.phase === "roundEnd" || room.phase === "gameEnd") && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table" }, /* @__PURE__ */ React.createElement("div", { className: "opponents-row" }, others.map((p) => {
       var _a2, _b2;
       const isTurn = room.order[room.turnIdx] === p.id;
-      return /* @__PURE__ */ React.createElement("div", { className: "pseat", key: p.id }, /* @__PURE__ */ React.createElement("div", { className: `pname ${isTurn ? "pname-active" : ""}` }, isTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), p.name, room.cactusBy === p.id && " \u{1F335}", ((_a2 = room.outPlayers) == null ? void 0 : _a2[p.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2" }, [0, 1, 2, 3].map((i) => renderCard(p.id, i, false))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b2 = room.roundResults) == null ? void 0 : _b2[p.id]) && /* @__PURE__ */ React.createElement("div", { className: "pts-tag" }, room.roundResults[p.id].total, " pts", room.roundResults[p.id].doubled && " (x2 !)"));
+      return /* @__PURE__ */ React.createElement("div", { className: "pseat", key: p.id }, /* @__PURE__ */ React.createElement("div", { className: `pname ${isTurn ? "pname-active" : ""}` }, isTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), p.isBot ? "\u{1F916} " : "", p.name, room.cactusBy === p.id && " \u{1F335}", ((_a2 = room.outPlayers) == null ? void 0 : _a2[p.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2" }, [0, 1, 2, 3].map((i) => renderCard(p.id, i, false))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b2 = room.roundResults) == null ? void 0 : _b2[p.id]) && /* @__PURE__ */ React.createElement("div", { className: "pts-tag" }, room.roundResults[p.id].total, " pts", room.roundResults[p.id].doubled && " (x2 !)"));
     })), /* @__PURE__ */ React.createElement("div", { className: "center-zone" }, /* @__PURE__ */ React.createElement("div", { className: "piles-row" }, /* @__PURE__ */ React.createElement("div", { className: "pile" }, /* @__PURE__ */ React.createElement(
       "div",
       {
@@ -1088,7 +1293,7 @@
         room.discard[room.discard.length - 1].s
       ) : /* @__PURE__ */ React.createElement("div", { className: "card empty" }),
       /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "D\xE9fausse")
-    )), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "drawn-banner" }, /* @__PURE__ */ React.createElement("div", { className: `card face-up drawn-preview ${isRed(room.drawn.card.s) ? "red" : ""}` }, label(room.drawn.card.r), room.drawn.card.s), /* @__PURE__ */ React.createElement("div", { className: "drawn-banner-text" }, "C'est ta carte pioch\xE9e \u2014 choisis une de tes cartes ci-dessous pour l'\xE9changer, ou d\xE9fausse-la avec le bouton plus bas.")), drag && drag.moved && /* @__PURE__ */ React.createElement(
+    )), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "drawn-banner" }, /* @__PURE__ */ React.createElement("div", { className: `card face-up drawn-preview ${isRed(room.drawn.card.s) ? "red" : ""}` }, label(room.drawn.card.r), room.drawn.card.s)), drag && drag.moved && /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "drag-ghost",
