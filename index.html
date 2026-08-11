@@ -85,6 +85,8 @@
   const PEEK_SECONDS = 5;
   const REVEAL_SECONDS = 3;
   const DRAWOFF_SECONDS = 4;
+  const BOT_MOVE_DELAY_MIN = 1800;
+  const BOT_MOVE_DELAY_RANGE = 1400;
   function label(r) {
     return RANK_LABEL[r] || String(r);
   }
@@ -705,7 +707,7 @@
           if (s.phase !== "playing" || s.order[s.turnIdx] !== bot.id) return null;
           return botStep(s, bot.id);
         });
-      }, 700 + Math.random() * 600);
+      }, BOT_MOVE_DELAY_MIN + Math.random() * BOT_MOVE_DELAY_RANGE);
       return () => {
         cancelled = true;
         clearTimeout(t);
