@@ -16,6 +16,13 @@
   #setup-screen a { color:#C9A24B; }
   #boot-error { display:none; position:fixed; inset:0; background:#2A1414; color:#F4ECD8; font-family: ui-monospace, monospace; padding:24px; box-sizing:border-box; overflow:auto; z-index:9999; white-space:pre-wrap; font-size:13px; }
   #boot-error h2 { color:#F0A8A8; font-family: system-ui, sans-serif; }
+  #version-badge {
+    position:fixed; bottom:8px; right:10px; z-index:10000;
+    font-family: ui-monospace, monospace; font-size:11px;
+    color:rgba(244,236,216,0.45); background:rgba(0,0,0,0.25);
+    padding:3px 8px; border-radius:6px; pointer-events:none;
+    letter-spacing:0.5px;
+  }
 </style>
 
 <!-- React (CDN, pas besoin d'installation) -->
@@ -45,6 +52,7 @@
   <div id="boot-error-msg"></div>
   <p style="opacity:0.7">(Vérifie ta configuration Firebase en haut du script, et que la Realtime Database est bien activée.)</p>
 </div>
+<div id="version-badge">v1</div>
 
 <script>
   window.addEventListener("error", function (e) {
