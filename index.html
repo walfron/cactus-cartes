@@ -16,6 +16,13 @@
   #setup-screen a { color:#C9A24B; }
   #boot-error { display:none; position:fixed; inset:0; background:#2A1414; color:#F4ECD8; font-family: ui-monospace, monospace; padding:24px; box-sizing:border-box; overflow:auto; z-index:9999; white-space:pre-wrap; font-size:13px; }
   #boot-error h2 { color:#F0A8A8; font-family: system-ui, sans-serif; }
+  #version-badge {
+    position:fixed; top:calc(6px + env(safe-area-inset-top)); right:10px; z-index:10000;
+    font-family: ui-monospace, monospace; font-size:11px;
+    color:rgba(244,236,216,0.45); background:rgba(0,0,0,0.25);
+    padding:3px 8px; border-radius:6px; pointer-events:none;
+    letter-spacing:0.5px;
+  }
 </style>
 
 <!-- React (CDN, pas besoin d'installation) -->
@@ -45,6 +52,7 @@
   <div id="boot-error-msg"></div>
   <p style="opacity:0.7">(Vérifie ta configuration Firebase en haut du script, et que la Realtime Database est bien activée.)</p>
 </div>
+<div id="version-badge">v3</div>
 
 <script>
   window.addEventListener("error", function (e) {
@@ -246,22 +254,11 @@
     return [...ids.slice(i), ...ids.slice(0, i)];
   }
   function computeHandScore(hand) {
-    const cols = [
-      [0, 2],
-      [1, 3]
-    ];
     let total = 0;
-    const cancelled = /* @__PURE__ */ new Set();
-    for (const [a, b] of cols) {
-      if (hand[a] && hand[b] && hand[a].r === hand[b].r) {
-        cancelled.add(a);
-        cancelled.add(b);
-      }
-    }
-    hand.forEach((c, i) => {
-      if (c && !cancelled.has(i)) total += cardValue(c.r, c.s);
+    hand.forEach((c) => {
+      if (c) total += cardValue(c.r, c.s);
     });
-    return { total, cancelled: [...cancelled] };
+    return { total, cancelled: [] };
   }
   function checkEmptyHand(state, playerId) {
     if (isHandEmpty(state.hands[playerId])) {
@@ -1085,12 +1082,12 @@
   .grid2x2-mine .card { width:70px; height:96px; font-size:23px; }
   .pts-tag { margin-top:6px; font-size:12px; color:var(--gold); font-weight:600; }
 
-  .card { width:54px; height:76px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:600; font-size:19px; cursor:default; user-select:none; position:relative; transition: transform .15s ease, opacity .15s ease; border:1px solid rgba(0,0,0,0.25);}
+  .card { width:54px; height:76px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:700; font-size:22px; cursor:default; user-select:none; position:relative; transition: transform .15s ease, opacity .15s ease; border:1px solid rgba(0,0,0,0.25);}
   .card.clickable{ cursor:pointer; }
   .card.clickable:hover{ transform:translateY(-4px); }
   .card.face-down { background: repeating-linear-gradient(135deg, #6B3F55, #6B3F55 6px, #5A3448 6px, #5A3448 12px); border:1px solid rgba(201,162,75,0.4); color:transparent; }
   .card.face-down::after{ content:'\u2726'; color:var(--gold); font-size:14px; opacity:0.8; }
-  .card.face-up { background:var(--cream); color:var(--black); }
+  .card.face-up { background:var(--cream); color:var(--black); font-weight:800; text-shadow: 0 1px 0 rgba(255,255,255,0.4); }
   .card.face-up.red { color:var(--red); }
   .card.empty { background:transparent; border:1px dashed rgba(244,236,216,0.2); }
   .card.selected { outline:2px solid var(--gold); outline-offset:2px; }
@@ -1167,22 +1164,36 @@
   }
 
   @media (max-width:640px){
-    .cactus-root{ padding:12px; }
-    .brand h1{ font-size:26px; }
-    .panel{ margin:24px auto; padding:20px; max-width:100%; }
+    .cactus-root{ padding:10px; padding-bottom:0; }
+    .brand h1{ font-size:22px; }
+    .panel{ margin:20px auto; padding:18px; max-width:100%; }
     .lobby-code .code{ font-size:30px; letter-spacing:5px; }
-    .topbar{ justify-content:center; text-align:center; }
-    .table{ padding:16px 10px; gap:16px; }
-    .opponents-row{ gap:14px; padding-bottom:14px; }
-    .piles-row{ gap:20px; padding:12px 16px; }
-    .card{ width:44px; height:60px; font-size:15px; }
-    .grid2x2-mine .card{ width:58px; height:80px; font-size:19px; }
-    .drag-ghost .card{ width:58px; height:80px; font-size:19px; }
-    .card.drawn-preview{ width:52px; height:72px; font-size:17px; }
-    .drawn-banner{ flex-direction:column; text-align:center; }
-    .actionbar{ flex-direction:column; align-items:stretch; }
-    .actionbar .msg{ text-align:center; }
-    .actionbar .btn{ width:100%; }
+    .topbar{ justify-content:center; text-align:center; margin-bottom:8px; }
+    .table{ padding:12px 8px; gap:10px; }
+    .table-wrap{ padding-bottom:calc(170px + env(safe-area-inset-bottom)); }
+    .opponents-row{ gap:8px; padding-bottom:10px; }
+    .pname{ font-size:11px; margin-bottom:5px; padding:2px 8px; }
+    .grid2x2{ gap:4px; }
+    .piles-row{ gap:14px; padding:8px 12px; }
+    .pile-label{ font-size:9px; margin-top:4px; }
+    .card{ width:38px; height:52px; font-size:16px; }
+    .grid2x2-mine{ gap:6px; }
+    .grid2x2-mine .card{ width:50px; height:68px; font-size:19px; }
+    .drag-ghost .card{ width:50px; height:68px; font-size:19px; }
+    .card.drawn-preview{ width:46px; height:62px; font-size:18px; }
+    .drawn-banner{ flex-direction:column; text-align:center; padding:8px 12px; }
+    .my-area{ padding-top:2px; gap:6px; }
+    .center-zone{ gap:8px; }
+    .actionbar{
+      position:fixed; left:0; right:0; bottom:0; margin-top:0;
+      border-radius:16px 16px 0 0; z-index:80;
+      box-shadow: 0 -6px 20px rgba(0,0,0,0.4);
+      padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+      flex-direction:column; align-items:stretch;
+      max-height:40vh; overflow-y:auto;
+    }
+    .actionbar .msg{ text-align:center; font-size:13px; }
+    .actionbar .btn{ width:100%; padding:11px 16px; }
     .scoreboard{ overflow-x:auto; }
     .field input{ font-size:16px; } /* \xE9vite le zoom auto iOS */
   }
@@ -1208,6 +1219,21 @@
       )), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { width: "100%" }, onClick: joinRoom }, "Rejoindre"), error && /* @__PURE__ */ React.createElement("div", { className: "err" }, error)), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: "rgba(244,236,216,0.45)", maxWidth: 420, margin: "0 auto" } }, "Envoie le code de la partie \xE0 tes amis pour qu'ils rejoignent depuis ce m\xEAme lien, o\xF9 qu'ils soient."));
     }
     const others = room.players.filter((p) => me && p.id !== me.id);
+    let primaryAction = null;
+    if (room.phase === "playing" && myTurn && room.turnPhase === "awaitDraw") {
+      primaryAction = { label: "\u{1F335} Cactus", cls: "btn-berry", onClick: callCactus, disabled: busy };
+    } else if (room.phase === "playing" && myTurn && room.turnPhase === "awaitDecision") {
+      primaryAction = {
+        label: "D\xE9fausser" + (room.drawn && powerOf(room.drawn.card.r) ? " + pouvoir" : ""),
+        cls: "btn-gold",
+        onClick: discardDrawnAndMaybePower,
+        disabled: busy
+      };
+    } else if (room.phase === "roundEnd" && isHost) {
+      primaryAction = { label: "Manche suivante", cls: "btn-gold", onClick: nextRound, disabled: busy };
+    } else if (room.phase === "gameEnd" && isHost) {
+      primaryAction = { label: "Nouvelle partie", cls: "btn-gold", onClick: newGame, disabled: busy };
+    }
     function myVisibleCard(ownerId, card) {
       var _a2, _b2;
       const expiry = (_b2 = (_a2 = room.reveal) == null ? void 0 : _a2[me == null ? void 0 : me.id]) == null ? void 0 : _b2[card.id];
@@ -1255,7 +1281,7 @@
         visible ? `${label(card.r)}${card.s}` : ""
       );
     }
-    return /* @__PURE__ */ React.createElement("div", { className: "cactus-root" }, /* @__PURE__ */ React.createElement("style", null, STYLE), cactusBanner && /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-box" }, /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-emoji" }, "\u{1F335}"), /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-title" }, "CACTUS !"), /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-sub" }, `${cactusBanner} appelle Cactus !`))), /* @__PURE__ */ React.createElement("div", { className: "table-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "topbar" }, /* @__PURE__ */ React.createElement("div", { className: "brand", style: { marginBottom: 0 } }, /* @__PURE__ */ React.createElement("span", { className: "brand-mark", style: { fontSize: 22 } }, "\u{1F335}"), /* @__PURE__ */ React.createElement("h1", { style: { fontSize: 20 } }, "Cactus")), /* @__PURE__ */ React.createElement("div", { className: "roomchip" }, "Salon ", /* @__PURE__ */ React.createElement("b", null, room.code), " \xB7 ", room.players.length, " joueur(s)"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: leaveRoom }, "Quitter")), room.phase === "lobby" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto" } }, /* @__PURE__ */ React.createElement("div", { className: "lobby-code" }, /* @__PURE__ */ React.createElement("div", { className: "code" }, room.code), /* @__PURE__ */ React.createElement("div", { className: "hint" }, "Partage ce code avec tes amis")), /* @__PURE__ */ React.createElement("ul", { className: "plist" }, room.players.map((p) => /* @__PURE__ */ React.createElement("li", { key: p.id }, /* @__PURE__ */ React.createElement("span", null, p.isBot ? "\u{1F916} " : "", p.name), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 6, alignItems: "center" } }, p.id === room.hostId && /* @__PURE__ */ React.createElement("span", { className: "tag" }, "H\xF4te"), p.isBot && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { padding: "2px 8px", fontSize: 11 }, onClick: () => removeBot(p.id) }, "Retirer"))))), isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { width: "100%", marginBottom: 10 }, disabled: room.players.length >= 6, onClick: addBot }, "\u{1F916} Ajouter un bot"), isHost ? /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "cactus-root" }, /* @__PURE__ */ React.createElement("style", null, STYLE), cactusBanner && /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-box" }, /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-emoji" }, "\u{1F335}"), /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-title" }, "CACTUS !"), /* @__PURE__ */ React.createElement("div", { className: "cactus-banner-sub" }, `${cactusBanner} appelle Cactus !`))), /* @__PURE__ */ React.createElement("div", { className: "table-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "topbar" }, /* @__PURE__ */ React.createElement("div", { className: "brand", style: { marginBottom: 0 } }, /* @__PURE__ */ React.createElement("span", { className: "brand-mark", style: { fontSize: 22 } }, "\u{1F335}"), /* @__PURE__ */ React.createElement("h1", { style: { fontSize: 20 } }, "Cactus")), /* @__PURE__ */ React.createElement("div", { className: "roomchip" }, "Salon ", /* @__PURE__ */ React.createElement("b", null, room.code), " \xB7 ", room.players.length, " joueur(s)"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, primaryAction && /* @__PURE__ */ React.createElement("button", { className: `btn ${primaryAction.cls}`, style: { padding: "8px 14px", fontSize: 13 }, onClick: primaryAction.onClick, disabled: primaryAction.disabled }, primaryAction.label), /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { padding: "8px 11px", fontSize: 15, lineHeight: 1 }, onClick: leaveRoom, title: "Quitter", "aria-label": "Quitter" }, "\u2715"))), room.phase === "lobby" && /* @__PURE__ */ React.createElement("div", { className: "panel", style: { margin: "20px auto" } }, /* @__PURE__ */ React.createElement("div", { className: "lobby-code" }, /* @__PURE__ */ React.createElement("div", { className: "code" }, room.code), /* @__PURE__ */ React.createElement("div", { className: "hint" }, "Partage ce code avec tes amis")), /* @__PURE__ */ React.createElement("ul", { className: "plist" }, room.players.map((p) => /* @__PURE__ */ React.createElement("li", { key: p.id }, /* @__PURE__ */ React.createElement("span", null, p.isBot ? "\u{1F916} " : "", p.name), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 6, alignItems: "center" } }, p.id === room.hostId && /* @__PURE__ */ React.createElement("span", { className: "tag" }, "H\xF4te"), p.isBot && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { padding: "2px 8px", fontSize: 11 }, onClick: () => removeBot(p.id) }, "Retirer"))))), isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", style: { width: "100%", marginBottom: 10 }, disabled: room.players.length >= 6, onClick: addBot }, "\u{1F916} Ajouter un bot"), isHost ? /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "btn btn-gold",
@@ -1301,7 +1327,10 @@
         className: "drag-ghost",
         style: { left: drag.x, top: drag.y }
       },
-      /* @__PURE__ */ React.createElement("div", { className: `card face-up ${isRed(drag.card.s) ? "red" : ""}` }, label(drag.card.r), drag.card.s)
+      (() => {
+        const dragVisible = myVisibleCard(me.id, drag.card);
+        return /* @__PURE__ */ React.createElement("div", { className: `card ${dragVisible ? "face-up" : "face-down"} ${dragVisible && isRed(drag.card.s) ? "red" : ""}` }, dragVisible ? `${label(drag.card.r)}${drag.card.s}` : "");
+      })()
     )), /* @__PURE__ */ React.createElement("div", { className: "my-area" }, /* @__PURE__ */ React.createElement("div", { className: `pname ${myTurn ? "pname-active" : ""}` }, myTurn && /* @__PURE__ */ React.createElement("span", { className: "turn-dot" }), "Toi", room.cactusBy === me.id && " \u{1F335}", ((_a = room.outPlayers) == null ? void 0 : _a[me.id]) && room.phase === "playing" && " \xB7 0 pt"), /* @__PURE__ */ React.createElement("div", { className: "grid2x2 grid2x2-mine" }, [0, 1, 2, 3].map((i) => renderCard(me.id, i, true))), (room.phase === "roundEnd" || room.phase === "gameEnd") && ((_b = room.roundResults) == null ? void 0 : _b[me.id]) && /* @__PURE__ */ React.createElement("div", { className: "pts-tag" }, room.roundResults[me.id].total, " pts", room.roundResults[me.id].doubled && " (x2 !)"))), /* @__PURE__ */ React.createElement("div", { className: "actionbar" }, room.phase === "playing" && /* @__PURE__ */ React.createElement("div", { className: "msg" }, (() => {
       var _a2;
       if (!myTurn) {
@@ -1317,7 +1346,7 @@
         return /* @__PURE__ */ React.createElement("span", null, "Pouvoir : ", /* @__PURE__ */ React.createElement("b", null, powerLabel(room.power.type)), room.power.type === "kingLook" && room.power.stage === 2 && " \u2014 \xE9change ou passe.");
       }
       return null;
-    })()), room.phase === "playing" && myTurn && room.turnPhase === "awaitDraw" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-berry", onClick: callCactus, disabled: busy }, "\u{1F335} Appeler Cactus !"), room.phase === "playing" && myTurn && room.turnPhase === "awaitDecision" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: discardDrawnAndMaybePower, disabled: busy }, "D\xE9fausser", room.drawn && powerOf(room.drawn.card.r) ? " & activer le pouvoir" : ""), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_c = room.power) == null ? void 0 : _c.type) !== "kingLook" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: skipPower, disabled: busy }, "Passer"), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_d = room.power) == null ? void 0 : _d.type) === "kingLook" && room.power.stage === 2 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: declineKingSwap, disabled: busy }, "Ne pas \xE9changer"), room.phase === "roundEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: nextRound, disabled: busy }, "Manche suivante"), room.phase === "gameEnd" && isHost && /* @__PURE__ */ React.createElement("button", { className: "btn btn-gold", onClick: newGame, disabled: busy }, "Nouvelle partie"), (room.phase === "roundEnd" || room.phase === "gameEnd") && !isHost && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: "rgba(244,236,216,0.6)" } }, "En attente de l'h\xF4te\u2026")), /* @__PURE__ */ React.createElement("div", { className: "scoreboard" }, /* @__PURE__ */ React.createElement("table", null, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Joueur"), (room.scores[(_e = room.players[0]) == null ? void 0 : _e.id] || []).map((_, i) => /* @__PURE__ */ React.createElement("th", { key: i }, "M", i + 1)), /* @__PURE__ */ React.createElement("th", null, "Total"))), /* @__PURE__ */ React.createElement("tbody", null, room.players.map((p) => {
+    })()), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_c = room.power) == null ? void 0 : _c.type) !== "kingLook" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: skipPower, disabled: busy }, "Passer"), room.phase === "playing" && myTurn && room.turnPhase === "awaitPower" && ((_d = room.power) == null ? void 0 : _d.type) === "kingLook" && room.power.stage === 2 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: declineKingSwap, disabled: busy }, "Ne pas \xE9changer"), (room.phase === "roundEnd" || room.phase === "gameEnd") && !isHost && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: "rgba(244,236,216,0.6)" } }, "En attente de l'h\xF4te\u2026")), /* @__PURE__ */ React.createElement("div", { className: "scoreboard" }, /* @__PURE__ */ React.createElement("table", null, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Joueur"), (room.scores[(_e = room.players[0]) == null ? void 0 : _e.id] || []).map((_, i) => /* @__PURE__ */ React.createElement("th", { key: i }, "M", i + 1)), /* @__PURE__ */ React.createElement("th", null, "Total"))), /* @__PURE__ */ React.createElement("tbody", null, room.players.map((p) => {
       const s = room.scores[p.id] || [];
       return /* @__PURE__ */ React.createElement("tr", { key: p.id }, /* @__PURE__ */ React.createElement("td", { style: { textAlign: "left" } }, p.name), s.map((v, i) => /* @__PURE__ */ React.createElement("td", { key: i }, v)), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--gold)", fontWeight: 700 } }, s.reduce((a, b) => a + b, 0)));
     })))), /* @__PURE__ */ React.createElement("div", { className: "log" }, room.log.map((l, i) => /* @__PURE__ */ React.createElement("div", { key: i }, l.text)))), room.phase === "gameEnd" && /* @__PURE__ */ React.createElement("div", { className: "modal-back" }, /* @__PURE__ */ React.createElement("div", { className: "modal" }, /* @__PURE__ */ React.createElement("div", { className: "disp", style: { fontSize: 24, marginBottom: 6 } }, "\u{1F335} Partie termin\xE9e"), (() => {
