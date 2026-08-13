@@ -949,6 +949,34 @@
     function onMyCardPointerCancel() {
       setDrag(null);
     }
+    function onDrawnCardPointerDown(e, card) {
+      if (!room || room.phase !== "playing" || !card) return;
+      if (!myTurn || room.turnPhase !== "awaitDecision") return;
+      e.preventDefault();
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (err) {
+      }
+      setDrag({
+        kind: "drawn",
+        idx: null,
+        card,
+        startX: e.clientX,
+        startY: e.clientY,
+        x: e.clientX,
+        y: e.clientY,
+        moved: false,
+        pointerId: e.pointerId
+      });
+    }
+    async function onDrawnCardPointerUp(e) {
+      const d = drag;
+      setDrag(null);
+      if (!d || d.kind !== "drawn" || e.pointerId !== d.pointerId) return;
+      if (d.moved && isOverDiscard(e.clientX, e.clientY)) {
+        await discardDrawnAndMaybePower();
+      }
+    }
     useEffect(() => {
       const cur = (room == null ? void 0 : room.cactusBy) || null;
       if (cur && cur !== prevCactusByRef.current) {
@@ -1339,7 +1367,18 @@
         room.discard[room.discard.length - 1].s
       ) : /* @__PURE__ */ React.createElement("div", { className: "card empty" }),
       /* @__PURE__ */ React.createElement("div", { className: "pile-label" }, "D\xE9fausse")
-    )), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "drawn-banner" }, /* @__PURE__ */ React.createElement("div", { className: `card face-up drawn-preview ${isRed(room.drawn.card.s) ? "red" : ""}` }, label(room.drawn.card.r), room.drawn.card.s)), drag && drag.moved && /* @__PURE__ */ React.createElement(
+    )), room.drawn && room.drawn.by === me.id && /* @__PURE__ */ React.createElement("div", { className: "drawn-banner" }, /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        className: `card face-up drawn-preview draggable ${isRed(room.drawn.card.s) ? "red" : ""} ${drag && drag.kind === "drawn" && drag.moved ? "drag-source" : ""}`,
+        onPointerDown: (e) => onDrawnCardPointerDown(e, room.drawn.card),
+        onPointerMove: onMyCardPointerMove,
+        onPointerUp: onDrawnCardPointerUp,
+        onPointerCancel: onMyCardPointerCancel
+      },
+      label(room.drawn.card.r),
+      room.drawn.card.s
+    )), drag && drag.moved && /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "drag-ghost",
