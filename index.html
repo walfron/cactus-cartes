@@ -280,10 +280,10 @@
       results[p.id] = { total, cancelled };
       if (total < best) best = total;
     }
-    if (state.cactusBy) {
+    if (state.cactusBy && results[state.cactusBy]) {
       const callerTotal = results[state.cactusBy].total;
       const others = state.players.filter((p) => p.id !== state.cactusBy);
-      const someoneStrictlyLower = others.some((p) => results[p.id].total < callerTotal);
+      const someoneStrictlyLower = others.some((p) => results[p.id] && results[p.id].total < callerTotal);
       if (someoneStrictlyLower) {
         results[state.cactusBy].doubled = true;
         results[state.cactusBy].total *= 2;
@@ -520,7 +520,7 @@
       return () => ref.off("value", cb);
     }, [room == null ? void 0 : room.code]);
     async function withRoom(mutator) {
-      if (!(room == null ? void 0 : room.code) || busyRef.current) return;
+      if (!(room == null ? void 0 : room.code) || busyRef.current) return false;
       busyRef.current = true;
       setBusy(true);
       try {
@@ -534,8 +534,10 @@
         if (result.committed && result.snapshot.exists()) {
           setRoom(hydrate(result.snapshot.val()));
         }
+        return true;
       } catch (e) {
         console.error("withRoom transaction failed:", e);
+        return true;
       } finally {
         busyRef.current = false;
         setBusy(false);
@@ -698,13 +700,19 @@
       if (!bot) return;
       if (room.outPlayers && room.outPlayers[currentId]) return;
       let cancelled = false;
-      const t = setTimeout(() => {
+      let t = null;
+      const attemptBotMove = () => {
         if (cancelled) return;
         withRoom((s) => {
           if (s.phase !== "playing" || s.order[s.turnIdx] !== bot.id) return null;
           return botStep(s, bot.id);
+        }).then((ran) => {
+          if (!cancelled && ran === false) {
+            t = setTimeout(attemptBotMove, 300);
+          }
         });
-      }, BOT_MOVE_DELAY_MIN + Math.random() * BOT_MOVE_DELAY_RANGE);
+      };
+      t = setTimeout(attemptBotMove, BOT_MOVE_DELAY_MIN + Math.random() * BOT_MOVE_DELAY_RANGE);
       return () => {
         cancelled = true;
         clearTimeout(t);
